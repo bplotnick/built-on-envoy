@@ -760,7 +760,7 @@ Configuration for the dns-gateway resolver UDP listener filter, the DNS-intercep
 
 ### domains
 
-Domain matchers, each with its own CIDR range for virtual IP allocation.
+Domain matchers, each with its own CIDR range(s) for virtual IP allocation.
 
 | | |
 |---|---|
@@ -774,12 +774,12 @@ Domain matchers, each with its own CIDR range for virtual IP allocation.
 
 #### domains.base_ip
 
-Base address for virtual IP allocation. May be IPv4 (e.g. "10.0.0.0", answered as an A record) or IPv6 (e.g. "fd00::", answered as an AAAA record). The address family of base_ip determines which DNS record type this domain answers.
+Flat single-family form. Base address for virtual IP allocation, IPv4 (answered as A) or IPv6 (answered as AAAA); the address family is inferred from the value. Mutually exclusive with ipv4/ipv6.
 
 | | |
 |---|---|
 | **Type** | `string` |
-| **Required** | Yes |
+| **Required** | No |
 
 [↑ Top](#) | [↑ DNS Gateway Resolver Configuration](#resolver)
 
@@ -799,9 +799,35 @@ Exact domain ("example.com"), single-level wildcard pattern ("*.example.com"), o
 
 
 
+#### domains.ipv4
+
+Explicit IPv4 range (answers A). Combine with ipv6 to serve a domain dual-stack. Mutually exclusive with the flat base_ip/prefix_len.
+
+| | |
+|---|---|
+| **Type** | [ipv4Range](#resolver-ipv4Range) |
+| **Required** | No |
+
+[↑ Top](#) | [↑ DNS Gateway Resolver Configuration](#resolver)
+
+
+
+#### domains.ipv6
+
+Explicit IPv6 range (answers AAAA). Combine with ipv4 to serve a domain dual-stack. Mutually exclusive with the flat base_ip/prefix_len.
+
+| | |
+|---|---|
+| **Type** | [ipv6Range](#resolver-ipv6Range) |
+| **Required** | No |
+
+[↑ Top](#) | [↑ DNS Gateway Resolver Configuration](#resolver)
+
+
+
 #### domains.metadata
 
-String key-value pairs exposed in Envoy filter state as io.builtonenvoy.dns_gateway.metadata.\<key\>.
+String key-value pairs exposed in Envoy filter state as io.builtonenvoy.dns_gateway.metadata.\<key\>. Shared across both families for a dual-stack matcher.
 
 | | |
 |---|---|
@@ -814,12 +840,12 @@ String key-value pairs exposed in Envoy filter state as io.builtonenvoy.dns_gate
 
 #### domains.prefix_len
 
-CIDR prefix length. For an IPv4 base_ip the valid range is 1-32 (a /24 gives 256 virtual IPs); for an IPv6 base_ip it is 1-128 (a /64 gives 2^64 virtual IPs). Prefixes beyond the base_ip's family bound are rejected at config load.
+CIDR prefix length for the flat base_ip: 1-32 for IPv4, 1-128 for IPv6 (validated against the base_ip family at config load).
 
 | | |
 |---|---|
 | **Type** | `integer` |
-| **Required** | Yes |
+| **Required** | No |
 
 [↑ Top](#) | [↑ DNS Gateway Resolver Configuration](#resolver)
 
@@ -834,7 +860,73 @@ If true, forward queries to upstream resolvers when a CIDR range is exhausted. D
 | **Type** | `boolean` |
 | **Required** | No |
 
-[↑ Top](#) | [↑ DNS Gateway Resolver Configuration](#resolver) {/* if .SubProperties */} {/* range .Properties */} {/* if .CustomTypes */}
+[↑ Top](#) | [↑ DNS Gateway Resolver Configuration](#resolver) {/* if .SubProperties */} {/* range .Properties */}
+
+
+
+<a id="resolver-ipv4Address"></a>
+### Custom type: ipv4Address
+
+IPv4 base address (answered as an A record). {/* range .Properties */}
+
+<a id="resolver-ipv4Range"></a>
+### Custom type: ipv4Range
+
+An IPv4 virtual-IP range (answers A queries).
+
+#### base_ip
+
+
+
+| | |
+|---|---|
+| **Type** | [ipv4Address](#resolver-ipv4Address) |
+| **Required** | Yes |
+
+[↑ Top](#) | [↑ DNS Gateway Resolver Configuration](#resolver)
+
+#### prefix_len
+
+CIDR prefix length (1-32). A /24 gives 256 virtual IPs.
+
+| | |
+|---|---|
+| **Type** | `integer` |
+| **Required** | Yes |
+
+[↑ Top](#) | [↑ DNS Gateway Resolver Configuration](#resolver) {/* range .Properties */}
+
+<a id="resolver-ipv6Address"></a>
+### Custom type: ipv6Address
+
+IPv6 base address (answered as an AAAA record). {/* range .Properties */}
+
+<a id="resolver-ipv6Range"></a>
+### Custom type: ipv6Range
+
+An IPv6 virtual-IP range (answers AAAA queries).
+
+#### base_ip
+
+
+
+| | |
+|---|---|
+| **Type** | [ipv6Address](#resolver-ipv6Address) |
+| **Required** | Yes |
+
+[↑ Top](#) | [↑ DNS Gateway Resolver Configuration](#resolver)
+
+#### prefix_len
+
+CIDR prefix length (1-128). A /64 gives 2^64 virtual IPs.
+
+| | |
+|---|---|
+| **Type** | `integer` |
+| **Required** | Yes |
+
+[↑ Top](#) | [↑ DNS Gateway Resolver Configuration](#resolver) {/* range .Properties */} {/* range .CustomTypes */} {/* if .CustomTypes */}
 
 
 

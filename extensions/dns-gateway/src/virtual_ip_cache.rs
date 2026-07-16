@@ -60,8 +60,10 @@ pub struct VirtualIpCache {
     // Maps between an allocated virtual IP and its associated domain and metadata.
     ip_to_dest: DashMap<IpAddr, (String, HashMap<String, String>)>,
 
-    // Maps between a domain and its allocated virtual IP. Used to prevent repeat allocations for the same domain.
-    domain_to_ip: DashMap<String, IpAddr>,
+    // Maps between a (domain, is_ipv6) pair and its allocated virtual IP. Keying on the address
+    // family lets one domain hold both an IPv4 and an IPv6 virtual IP (dual-stack) while still
+    // deduping repeat allocations within a family.
+    domain_to_ip: DashMap<(String, bool), IpAddr>,
 
     // Tracks the next available offset for each CIDR range.
     // Virtual IPs are allocated incrementally, so this number monotonically increases until the range is exhausted.
@@ -89,11 +91,14 @@ impl VirtualIpCache {
         base_ip: IpAddr,
         prefix_len: u8,
     ) -> Option<IpAddr> {
-        if let Some(ip) = self.domain_to_ip.get(&domain) {
+        // Dedup per (domain, address family): the same FQDN may hold both an A and an AAAA virtual
+        // IP, but repeat queries within one family reuse the existing allocation.
+        let key = (domain.clone(), base_ip.is_ipv6());
+        if let Some(ip) = self.domain_to_ip.get(&key) {
             return Some(*ip);
         }
 
-        match self.domain_to_ip.entry(domain.clone()) {
+        match self.domain_to_ip.entry(key) {
             Entry::Occupied(entry) => Some(*entry.get()),
             Entry::Vacant(entry) => {
                 let capacity = cidr_capacity(&base_ip, prefix_len);

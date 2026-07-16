@@ -59,41 +59,10 @@ impl DnsGatewayFilterConfig {
             .ok()?;
 
         for d in &gateway_config.domains {
-            // A bare "*" is an accepted catch-all (it matches every queried domain at runtime
-            // via matches_domain). Skip the DNS-name parse and the bare-wildcard rejection for
-            // it — those reject "*" as an invalid host — but still validate its base_ip and
-            // prefix_len below like any other matcher.
-            if d.domain != "*" {
-                let name = Name::from_utf8(&d.domain)
-                    .map_err(|e| envoy_log_error!("Invalid domain '{}': {e}", d.domain))
-                    .ok()?;
-                if name.is_wildcard() && name.num_labels() < 2 {
-                    envoy_log_error!(
-                        "Bare wildcard '{}' is not allowed, use '*.example.com' or a bare \"*\" catch-all instead",
-                        d.domain
-                    );
-                    return None;
-                }
-            }
-
-            // Accept both IPv4 (A) and IPv6 (AAAA) base addresses. The address family of
-            // base_ip determines which record type the gateway answers for this domain.
-            let base = d
-                .parse_base_ip()
-                .map_err(|e| {
-                    envoy_log_error!("Invalid base_ip '{}' for '{}': {e}", d.base_ip, d.domain)
-                })
-                .ok()?;
-
-            // prefix_len upper bound depends on the family: 32 for IPv4, 128 for IPv6.
-            let max = config::DomainMatcher::max_prefix_len(&base);
-            if !(1..=max).contains(&d.prefix_len) {
-                envoy_log_error!(
-                    "Invalid prefix_len {} for '{}' (must be 1..={})",
-                    d.prefix_len,
-                    d.domain,
-                    max
-                );
+            // Each matcher validates its domain pattern and range form (flat base_ip/prefix_len
+            // or the explicit ipv4/ipv6 blocks); see config::DomainMatcher::validate.
+            if let Err(e) = d.validate() {
+                envoy_log_error!("Invalid dns-gateway matcher: {e}");
                 return None;
             }
         }
@@ -142,30 +111,30 @@ impl DnsGatewayFilter {
         // Strip it so our wildcard patterns like "*.aws.com" match correctly.
         let domain = question.name().to_utf8().trim_end_matches('.').to_string();
 
+        // First-match-by-config-order precedence: the first matcher whose pattern matches owns
+        // this domain. Non-matching domains pass through (None) to upstream resolvers.
         let matcher = self
             .config
             .domains
             .iter()
             .find(|m| matches_domain(&m.domain, &domain))?;
 
-        // The matcher's base_ip family decides which query type we answer:
-        //   IPv4 base_ip  -> answer A    queries (AAAA -> NODATA)
-        //   IPv6 base_ip  -> answer AAAA queries (A    -> NODATA)
-        let base_ip = matcher.parse_base_ip().ok()?;
-        let answers_this_query = matches!(
-            (base_ip, question.query_type()),
-            (IpAddr::V4(_), RecordType::A) | (IpAddr::V6(_), RecordType::AAAA)
-        );
-        if !answers_this_query {
-            return build_nodata_response(&query).ok();
-        }
+        // We only mint virtual IPs for A/AAAA; any other query type on an intercepted domain
+        // returns NODATA (never pass-through, so it can't leak to upstream resolvers).
+        let want_v6 = match question.query_type() {
+            RecordType::A => false,
+            RecordType::AAAA => true,
+            _ => return build_nodata_response(&query).ok(),
+        };
 
-        match get_cache().allocate(
-            domain,
-            matcher.metadata.clone(),
-            base_ip,
-            matcher.prefix_len as u8,
-        ) {
+        // The owning matcher supplies the range for the queried family. A matcher may serve one
+        // family (flat form) or both (explicit ipv4/ipv6 blocks — dual-stack). If it doesn't serve
+        // the queried family, return NODATA — never fall through to a later, broader matcher.
+        let Some((base_ip, prefix_len)) = matcher.resolved_range(want_v6) else {
+            return build_nodata_response(&query).ok();
+        };
+
+        match get_cache().allocate(domain, matcher.metadata.clone(), base_ip, prefix_len as u8) {
             Some(ip) => build_dns_response(&query, question.name(), ip).ok(),
             None if self.config.fail_open => None,
             None => build_nodata_response(&query).ok(),
@@ -478,15 +447,156 @@ mod tests {
         assert!(DnsGatewayFilterConfig::new(config.as_bytes()).is_none());
     }
 
+    // ── Explicit dual-stack (ipv4/ipv6 blocks) ───────────────────────────────
+
+    #[test]
+    fn test_config_parsing_explicit_dual_stack_valid() {
+        let config = r#"{
+            "domains": [
+                {
+                    "domain": "*.aws.com",
+                    "metadata": {"cluster": "aws"},
+                    "ipv4": {"base_ip": "10.0.0.0", "prefix_len": 24},
+                    "ipv6": {"base_ip": "fd00::", "prefix_len": 64}
+                }
+            ]
+        }"#;
+        assert!(DnsGatewayFilterConfig::new(config.as_bytes()).is_some());
+    }
+
+    #[test]
+    fn test_config_parsing_rejects_mixed_flat_and_explicit() {
+        // base_ip is mutually exclusive with ipv4/ipv6.
+        let config = r#"{
+            "domains": [
+                {"domain": "*.aws.com", "base_ip": "10.0.0.0", "prefix_len": 24,
+                 "ipv6": {"base_ip": "fd00::", "prefix_len": 64}}
+            ]
+        }"#;
+        assert!(DnsGatewayFilterConfig::new(config.as_bytes()).is_none());
+    }
+
+    #[test]
+    fn test_config_parsing_rejects_family_mismatched_block() {
+        // The ipv4 block must contain an IPv4 base_ip.
+        let config = r#"{
+            "domains": [
+                {"domain": "*.aws.com", "ipv4": {"base_ip": "fd00::", "prefix_len": 64}}
+            ]
+        }"#;
+        assert!(DnsGatewayFilterConfig::new(config.as_bytes()).is_none());
+    }
+
+    #[test]
+    fn test_config_parsing_rejects_no_range_form() {
+        let config = r#"{"domains": [{"domain": "*.aws.com", "metadata": {}}]}"#;
+        assert!(DnsGatewayFilterConfig::new(config.as_bytes()).is_none());
+    }
+
+    #[test]
+    fn test_process_dns_query_explicit_dual_stack_answers_both_families() {
+        let filter = DnsGatewayFilter {
+            config: Arc::new(config::DnsGateway {
+                domains: vec![config::DomainMatcher {
+                    domain: "*.dual-test.com".to_string(),
+                    ipv4: Some(config::FamilyRange {
+                        base_ip: "10.160.0.0".to_string(),
+                        prefix_len: 24,
+                    }),
+                    ipv6: Some(config::FamilyRange {
+                        base_ip: "fd00:d00a::".to_string(),
+                        prefix_len: 64,
+                    }),
+                    ..Default::default()
+                }],
+                fail_open: false,
+            }),
+        };
+
+        let a = parse_response(
+            &filter
+                .process_dns_query(&make_dns_query("api.dual-test.com", RecordType::A))
+                .unwrap(),
+        );
+        assert!(
+            matches!(a.answers()[0].data(), RData::A(ip) if ip.0.octets()[..3] == [10, 160, 0])
+        );
+
+        let aaaa = parse_response(
+            &filter
+                .process_dns_query(&make_dns_query("api.dual-test.com", RecordType::AAAA))
+                .unwrap(),
+        );
+        assert!(matches!(aaaa.answers()[0].data(), RData::AAAA(_)));
+    }
+
+    #[test]
+    fn test_process_dns_query_explicit_single_family_other_nodata() {
+        // Only an ipv4 block -> AAAA returns NODATA (not pass-through).
+        let filter = DnsGatewayFilter {
+            config: Arc::new(config::DnsGateway {
+                domains: vec![config::DomainMatcher {
+                    domain: "*.v4only.com".to_string(),
+                    ipv4: Some(config::FamilyRange {
+                        base_ip: "10.161.0.0".to_string(),
+                        prefix_len: 24,
+                    }),
+                    ..Default::default()
+                }],
+                fail_open: false,
+            }),
+        };
+        let resp = filter.process_dns_query(&make_dns_query("api.v4only.com", RecordType::AAAA));
+        assert!(resp.is_some(), "must NODATA, not pass through");
+        assert_eq!(parse_response(&resp.unwrap()).answers().len(), 0);
+    }
+
+    #[test]
+    fn test_process_dns_query_precedence_specific_before_catchall() {
+        // An earlier specific v4 matcher must not be bypassed by a later v6 "*" catch-all:
+        // AAAA for the specific domain returns NODATA, not an answer from the catch-all.
+        let filter = DnsGatewayFilter {
+            config: Arc::new(config::DnsGateway {
+                domains: vec![
+                    config::DomainMatcher {
+                        domain: "api.aws.com".to_string(),
+                        base_ip: Some("10.162.0.0".to_string()),
+                        prefix_len: Some(24),
+                        ..Default::default()
+                    },
+                    config::DomainMatcher {
+                        domain: "*".to_string(),
+                        base_ip: Some("fd00:cafe::".to_string()),
+                        prefix_len: Some(64),
+                        ..Default::default()
+                    },
+                ],
+                fail_open: false,
+            }),
+        };
+
+        let aaaa = parse_response(
+            &filter
+                .process_dns_query(&make_dns_query("api.aws.com", RecordType::AAAA))
+                .unwrap(),
+        );
+        assert_eq!(
+            aaaa.answers().len(),
+            0,
+            "must NODATA, not answer from the later catch-all"
+        );
+    }
+
     #[test]
     fn test_process_dns_query_catchall_matches_any_domain() {
         let filter = DnsGatewayFilter {
             config: Arc::new(config::DnsGateway {
                 domains: vec![config::DomainMatcher {
                     domain: "*".to_string(),
-                    base_ip: "10.123.0.0".to_string(),
-                    prefix_len: 24,
+                    base_ip: Some("10.123.0.0".to_string()),
+                    prefix_len: Some(24),
                     metadata: HashMap::new(),
+                    ..Default::default()
                 }],
                 fail_open: false,
             }),
@@ -533,9 +643,10 @@ mod tests {
             config: Arc::new(config::DnsGateway {
                 domains: vec![config::DomainMatcher {
                     domain: "*.on-data-test.com".to_string(),
-                    base_ip: "10.100.0.0".to_string(),
-                    prefix_len: 24,
+                    base_ip: Some("10.100.0.0".to_string()),
+                    prefix_len: Some(24),
                     metadata: HashMap::new(),
+                    ..Default::default()
                 }],
                 fail_open: false,
             }),
@@ -566,9 +677,10 @@ mod tests {
             config: Arc::new(config::DnsGateway {
                 domains: vec![config::DomainMatcher {
                     domain: "*.v6-data-test.com".to_string(),
-                    base_ip: "fd00:100::".to_string(),
-                    prefix_len: 64,
+                    base_ip: Some("fd00:100::".to_string()),
+                    prefix_len: Some(64),
                     metadata: HashMap::new(),
+                    ..Default::default()
                 }],
                 fail_open: false,
             }),
@@ -598,9 +710,10 @@ mod tests {
             config: Arc::new(config::DnsGateway {
                 domains: vec![config::DomainMatcher {
                     domain: "*.v6-data-test.com".to_string(),
-                    base_ip: "fd00:200::".to_string(),
-                    prefix_len: 64,
+                    base_ip: Some("fd00:200::".to_string()),
+                    prefix_len: Some(64),
                     metadata: HashMap::new(),
+                    ..Default::default()
                 }],
                 fail_open: false,
             }),
@@ -621,9 +734,10 @@ mod tests {
             config: Arc::new(config::DnsGateway {
                 domains: vec![config::DomainMatcher {
                     domain: "*.on-data-test.com".to_string(),
-                    base_ip: "10.100.1.0".to_string(),
-                    prefix_len: 24,
+                    base_ip: Some("10.100.1.0".to_string()),
+                    prefix_len: Some(24),
                     metadata: HashMap::new(),
+                    ..Default::default()
                 }],
                 fail_open: false,
             }),
@@ -642,9 +756,10 @@ mod tests {
             config: Arc::new(config::DnsGateway {
                 domains: vec![config::DomainMatcher {
                     domain: "*.on-data-test.com".to_string(),
-                    base_ip: "10.100.2.0".to_string(),
-                    prefix_len: 24,
+                    base_ip: Some("10.100.2.0".to_string()),
+                    prefix_len: Some(24),
                     metadata: HashMap::new(),
+                    ..Default::default()
                 }],
                 fail_open: false,
             }),
@@ -688,9 +803,10 @@ mod tests {
             config: Arc::new(config::DnsGateway {
                 domains: vec![config::DomainMatcher {
                     domain: "*.fail-closed-test.com".to_string(),
-                    base_ip: base_ip.to_string(),
-                    prefix_len: 30,
+                    base_ip: Some(base_ip.to_string()),
+                    prefix_len: Some(30),
                     metadata: HashMap::new(),
+                    ..Default::default()
                 }],
                 fail_open: false,
             }),
@@ -730,9 +846,10 @@ mod tests {
             config: Arc::new(config::DnsGateway {
                 domains: vec![config::DomainMatcher {
                     domain: "*.fail-open-test.com".to_string(),
-                    base_ip: base_ip.to_string(),
-                    prefix_len: 30,
+                    base_ip: Some(base_ip.to_string()),
+                    prefix_len: Some(30),
                     metadata: HashMap::new(),
+                    ..Default::default()
                 }],
                 fail_open: true,
             }),

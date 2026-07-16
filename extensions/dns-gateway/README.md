@@ -85,6 +85,32 @@ See the [extension page](https://builtonenvoy.io/extensions/lookup) for the full
 - **Wildcard**: `"*.aws.com"` — matches one subdomain level (e.g. `api.aws.com`) but not `aws.com` itself or nested subdomains like `sub.api.aws.com`
 - **Catch-all**: `"*"` — matches every queried domain, minting a virtual IP for each. Use it as a low-priority final matcher to intercept all DNS and defer routing/authorization to downstream filters (e.g. `tcp_proxy` route selection on the filter state, or an `ext_authz` check) instead of enumerating every domain
 
+Matcher precedence is first-match by config order: the first matcher whose pattern matches the
+domain wins. If that matcher doesn't serve the queried address family, the resolver returns NODATA
+(never pass-through) rather than falling through to a later, broader matcher — so a client can't
+resolve a real address of the other family and bypass the winning matcher's routing/authorization.
+
+## Address families and dual-stack
+
+A matcher specifies its virtual-IP range(s) in one of two mutually exclusive forms:
+
+- **Flat (single family):** `base_ip` + `prefix_len`. The family is inferred from `base_ip`
+  (IPv4 → answers `A`, IPv6 → answers `AAAA`); the other query type returns NODATA.
+- **Explicit (dual-stack):** `ipv4` and/or `ipv6` blocks, each `{base_ip, prefix_len}`. Setting
+  both serves the domain **dual-stack** — `A` from `ipv4`, `AAAA` from `ipv6` — under one matcher
+  with shared `metadata`:
+
+  ```json
+  "domains": [
+    {
+      "domain": "*.aws.com",
+      "metadata": {"cluster": "aws"},
+      "ipv4": {"base_ip": "10.0.0.0", "prefix_len": 24},
+      "ipv6": {"base_ip": "fd00::",   "prefix_len": 64}
+    }
+  ]
+  ```
+
 ## Configuration
 
 ### `resolver` (UDP listener filter)
@@ -92,10 +118,16 @@ See the [extension page](https://builtonenvoy.io/extensions/lookup) for the full
 | Field                   | Type    | Description                                                        |
 | ----------------------- | ------- | ------------------------------------------------------------------ |
 | `domains`               | array   | Domain matchers, each with its own CIDR range                      |
-| `domains[].domain`      | string  | Exact (`"example.com"`) or wildcard (`"*.example.com"`) pattern    |
-| `domains[].base_ip`     | string  | Base address for virtual IP allocation. IPv4 (e.g. `"10.0.0.0"`, answered as an A record) or IPv6 (e.g. `"fd00::"`, answered as an AAAA record). |
-| `domains[].prefix_len`  | integer | CIDR prefix length. IPv4: 1-32 (a `/24` gives 256 IPs). IPv6: 1-128 (a `/64` gives 2^64 IPs). |
-| `domains[].metadata`    | object  | String key-value pairs exposed via filter state                    |
+| `domains[].domain`      | string  | Exact (`"example.com"`), wildcard (`"*.example.com"`), or `"*"` catch-all pattern |
+| `domains[].base_ip`     | string  | *Flat form.* Base address for virtual IP allocation — IPv4 (answered as A) or IPv6 (answered as AAAA). Mutually exclusive with `ipv4`/`ipv6`. |
+| `domains[].prefix_len`  | integer | *Flat form.* CIDR prefix length (IPv4: 1-32, IPv6: 1-128). |
+| `domains[].ipv4`        | object  | *Explicit form.* IPv4 range (answers A). Combine with `ipv6` for dual-stack. Mutually exclusive with flat `base_ip`. |
+| `domains[].ipv4.base_ip`    | string  | IPv4 base address of the range (e.g. `"10.0.0.0"`) |
+| `domains[].ipv4.prefix_len` | integer | CIDR prefix length (1-32) |
+| `domains[].ipv6`        | object  | *Explicit form.* IPv6 range (answers AAAA). Combine with `ipv4` for dual-stack. Mutually exclusive with flat `base_ip`. |
+| `domains[].ipv6.base_ip`    | string  | IPv6 base address of the range (e.g. `"fd00::"`) |
+| `domains[].ipv6.prefix_len` | integer | CIDR prefix length (1-128) |
+| `domains[].metadata`    | object  | String key-value pairs exposed via filter state (shared across families for a dual-stack matcher) |
 | `fail_open`             | boolean | If `true`, forward queries upstream when a CIDR range is exhausted. Default: `false` (return NODATA) |
 
 ### `lookup` (network filter)

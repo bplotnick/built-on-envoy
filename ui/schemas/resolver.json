@@ -6,51 +6,106 @@
   "type": "object",
   "required": ["domains"],
   "additionalProperties": false,
+  "$defs": {
+    "ipv4Address": {
+      "type": "string",
+      "description": "IPv4 base address (answered as an A record).",
+      "pattern": "^(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)$"
+    },
+    "ipv6Address": {
+      "type": "string",
+      "description": "IPv6 base address (answered as an AAAA record).",
+      "format": "ipv6",
+      "pattern": "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:)+:([0-9a-fA-F]{1,4}:)*[0-9a-fA-F]{0,4}|::([0-9a-fA-F]{1,4}:)*[0-9a-fA-F]{1,4}|::)$"
+    },
+    "ipv4Range": {
+      "type": "object",
+      "description": "An IPv4 virtual-IP range (answers A queries).",
+      "additionalProperties": false,
+      "required": ["base_ip", "prefix_len"],
+      "properties": {
+        "base_ip": { "$ref": "#/$defs/ipv4Address" },
+        "prefix_len": {
+          "type": "integer",
+          "description": "CIDR prefix length (1-32). A /24 gives 256 virtual IPs.",
+          "minimum": 1,
+          "maximum": 32
+        }
+      }
+    },
+    "ipv6Range": {
+      "type": "object",
+      "description": "An IPv6 virtual-IP range (answers AAAA queries).",
+      "additionalProperties": false,
+      "required": ["base_ip", "prefix_len"],
+      "properties": {
+        "base_ip": { "$ref": "#/$defs/ipv6Address" },
+        "prefix_len": {
+          "type": "integer",
+          "description": "CIDR prefix length (1-128). A /64 gives 2^64 virtual IPs.",
+          "minimum": 1,
+          "maximum": 128
+        }
+      }
+    }
+  },
   "properties": {
     "domains": {
       "type": "array",
-      "description": "Domain matchers, each with its own CIDR range for virtual IP allocation.",
+      "description": "Domain matchers, each with its own CIDR range(s) for virtual IP allocation.",
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["domain", "base_ip", "prefix_len"],
+        "required": ["domain"],
         "additionalProperties": false,
+        "description": "A matcher specifies its range(s) in exactly one of two mutually exclusive forms: the flat single-family form (base_ip + prefix_len) or the explicit form (ipv4 and/or ipv6 blocks, which can serve a domain dual-stack).",
         "properties": {
           "domain": {
             "type": "string",
             "description": "Exact domain (\"example.com\"), single-level wildcard pattern (\"*.example.com\"), or a bare \"*\" catch-all that matches every queried domain.",
             "minLength": 1
           },
+          "metadata": {
+            "type": "object",
+            "description": "String key-value pairs exposed in Envoy filter state as io.builtonenvoy.dns_gateway.metadata.\\<key\\>. Shared across both families for a dual-stack matcher.",
+            "additionalProperties": { "type": "string" },
+            "default": {}
+          },
           "base_ip": {
             "type": "string",
-            "description": "Base address for virtual IP allocation. May be IPv4 (e.g. \"10.0.0.0\", answered as an A record) or IPv6 (e.g. \"fd00::\", answered as an AAAA record). The address family of base_ip determines which DNS record type this domain answers.",
+            "description": "Flat single-family form. Base address for virtual IP allocation, IPv4 (answered as A) or IPv6 (answered as AAAA); the address family is inferred from the value. Mutually exclusive with ipv4/ipv6.",
             "anyOf": [
-              {
-                "description": "IPv4 base address (answered as an A record).",
-                "pattern": "^(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)$"
-              },
-              {
-                "description": "IPv6 base address (answered as an AAAA record).",
-                "format": "ipv6",
-                "pattern": "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:)+:([0-9a-fA-F]{1,4}:)*[0-9a-fA-F]{0,4}|::([0-9a-fA-F]{1,4}:)*[0-9a-fA-F]{1,4}|::)$"
-              }
+              { "$ref": "#/$defs/ipv4Address" },
+              { "$ref": "#/$defs/ipv6Address" }
             ]
           },
           "prefix_len": {
             "type": "integer",
-            "description": "CIDR prefix length. For an IPv4 base_ip the valid range is 1-32 (a /24 gives 256 virtual IPs); for an IPv6 base_ip it is 1-128 (a /64 gives 2^64 virtual IPs). Prefixes beyond the base_ip's family bound are rejected at config load.",
+            "description": "CIDR prefix length for the flat base_ip: 1-32 for IPv4, 1-128 for IPv6 (validated against the base_ip family at config load).",
             "minimum": 1,
             "maximum": 128
           },
-          "metadata": {
-            "type": "object",
-            "description": "String key-value pairs exposed in Envoy filter state as io.builtonenvoy.dns_gateway.metadata.\\<key\\>.",
-            "additionalProperties": {
-              "type": "string"
-            },
-            "default": {}
+          "ipv4": {
+            "$ref": "#/$defs/ipv4Range",
+            "description": "Explicit IPv4 range (answers A). Combine with ipv6 to serve a domain dual-stack. Mutually exclusive with the flat base_ip/prefix_len."
+          },
+          "ipv6": {
+            "$ref": "#/$defs/ipv6Range",
+            "description": "Explicit IPv6 range (answers AAAA). Combine with ipv4 to serve a domain dual-stack. Mutually exclusive with the flat base_ip/prefix_len."
           }
-        }
+        },
+        "oneOf": [
+          {
+            "title": "Flat single-family form",
+            "required": ["base_ip", "prefix_len"],
+            "not": { "anyOf": [{ "required": ["ipv4"] }, { "required": ["ipv6"] }] }
+          },
+          {
+            "title": "Explicit ipv4/ipv6 form",
+            "anyOf": [{ "required": ["ipv4"] }, { "required": ["ipv6"] }],
+            "not": { "anyOf": [{ "required": ["base_ip"] }, { "required": ["prefix_len"] }] }
+          }
+        ]
       }
     },
     "fail_open": {

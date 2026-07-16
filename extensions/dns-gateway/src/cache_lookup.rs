@@ -87,9 +87,12 @@ impl<ENF: EnvoyNetworkFilter> NetworkFilter<ENF> for CacheLookupFilter {
         let (ip_str, port) = envoy_filter.get_local_address();
         envoy_log_debug!("New connection, local_address={}:{}", ip_str, port);
 
-        // Parse as a generic IpAddr so both IPv4 and IPv6 virtual IPs resolve.
-        let ip: IpAddr = match ip_str.parse() {
-            Ok(ip) => ip,
+        // Parse as a generic IpAddr so both IPv4 and IPv6 virtual IPs resolve. Canonicalize with
+        // to_canonical() so an IPv4-mapped IPv6 address (e.g. "::ffff:10.0.0.5", which a dual-stack
+        // listener may report for an IPv4 connection) folds back to its IPv4 form and matches the
+        // key the resolver allocated. to_canonical() is a no-op for plain IPv4 and real IPv6.
+        let ip: IpAddr = match ip_str.parse::<IpAddr>() {
+            Ok(ip) => ip.to_canonical(),
             Err(_) => {
                 envoy_log_warn!("Failed to parse destination IP: {}", ip_str);
                 return abi::envoy_dynamic_module_type_on_network_filter_data_status::Continue;
@@ -329,6 +332,44 @@ mod tests {
         mock.expect_get_local_address()
             .returning(move || (ip.to_string(), 8080));
         mock.expect_set_filter_state_bytes().returning(|_, _| true);
+
+        let status = filter.on_new_connection(&mut mock);
+        assert_eq!(
+            status,
+            abi::envoy_dynamic_module_type_on_network_filter_data_status::Continue
+        );
+    }
+
+    #[test]
+    fn test_on_new_connection_ipv4_mapped_v6_local_address_resolves() {
+        // A dual-stack listener may report an IPv4 connection's local address in IPv4-mapped
+        // IPv6 form ("::ffff:a.b.c.d"). It must still resolve to the v4 allocation via
+        // to_canonical(), not miss the cache.
+        let ip = get_cache()
+            .allocate(
+                "mapped-v6-test.example.com".into(),
+                HashMap::new(),
+                "10.77.0.0".parse().unwrap(),
+                24,
+            )
+            .unwrap();
+        assert!(ip.is_ipv4(), "expected a v4 virtual IP, got {ip}");
+        let mapped = format!("::ffff:{ip}");
+
+        let config = CacheLookupFilterConfig::new(b"");
+        let mut mock = MockEnvoyNetworkFilter::new();
+        let mut filter = config.new_network_filter(&mut mock);
+
+        let mut mock = MockEnvoyNetworkFilter::new();
+        mock.expect_get_local_address()
+            .returning(move || (mapped.clone(), 8080));
+        mock.expect_set_filter_state_bytes()
+            .withf(|key, value| {
+                key == b"io.builtonenvoy.dns_gateway.domain"
+                    && value == b"mapped-v6-test.example.com"
+            })
+            .times(1)
+            .returning(|_, _| true);
 
         let status = filter.on_new_connection(&mut mock);
         assert_eq!(
