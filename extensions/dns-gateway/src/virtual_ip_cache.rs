@@ -100,7 +100,7 @@ impl VirtualIpCache {
                 let cidr = IpNet::new(base_ip, prefix_len).ok()?;
                 let counter = self.offsets.entry(cidr).or_insert(AtomicU64::new(0));
                 let offset = counter
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
                         ((n as u128) < capacity).then_some(n + 1)
                     })
                     .map_err(|n| {
