@@ -1,0 +1,283 @@
+# Copyright Built On Envoy
+# SPDX-License-Identifier: Apache-2.0
+# The full text of the Apache license is available in the LICENSE file at
+# the root of the repo.
+
+name: dynamic-fault-injection
+parent: composer
+categories:
+  - Traffic Control
+  - Performance
+author: Alessandro Vermeulen
+description: A dynamic fault injection filter that simulates latency distributions and error responses.
+tags:
+  - go
+  - http
+  - filter
+  - fault-injection
+  - latency
+  - testing
+license: Apache-2.0
+examples:
+  - title: Delay all success responses and introduce a 1% failure rate that returns quickly
+    description: |
+      Wrap a succesfully and fast responding mock or stub service and make it a one matching the production performance and error ratio.
+    code: |
+      CONFIG=$(cat <<-END
+      {
+        "endpoints": [
+          {
+            "match": {
+              "prefix": "/"
+            },
+            "responses": [
+              {
+                "status": 200,
+                "resolution": 1000,
+                "distribution": {
+                  "p0.0": "30ms",
+                  "p100.0": "500ms"
+                }
+              },
+              {
+                "status": 503,
+                "resolution": 10,
+                "distribution": {
+                  "p0.0": "3ms",
+                  "p100.0": "5ms"
+                }
+              }
+            ]
+          }
+        ]
+      }
+      END
+      )
+      boe run \
+          --extension dynamic-fault-injection \
+          --log-level dynamic_modules:debug \
+          --config "${CONFIG}"
+
+      ❯ curl -v http://localhost:10000/status/200
+      > GET /status/200 HTTP/1.1
+      > Host: localhost:10000
+      > User-Agent: curl/8.21.0
+      > Accept: */*
+      >
+      * Request completely sent off
+      < HTTP/1.1 200 OK
+      < server: envoy
+      < date: Mon, 03 Aug 2026 12:22:42 GMT
+      < content-type: text/html; charset=utf-8
+      < access-control-allow-origin: *
+      < access-control-allow-credentials: true
+      < content-length: 0
+      < x-envoy-upstream-service-time: 0
+      < x-fault-injected-delay: 213.77ms
+      < x-fault-actual-upstream: 953.946µs
+      < x-fault-status: 200
+      < x-fault-added-delay: 212.816054ms
+
+      $> curl -v http://localhost:10000/status/503
+      > GET /status/503 HTTP/1.1
+      > Host: localhost:10000
+      > User-Agent: curl/8.21.0
+      > Accept: */*
+      >
+      * Request completely sent off
+      < HTTP/1.1 503 Service Unavailable
+      < server: envoy
+      < date: Mon, 03 Aug 2026 12:20:30 GMT
+      < content-type: text/html; charset=utf-8
+      < access-control-allow-origin: *
+      < access-control-allow-credentials: true
+      < content-length: 0
+      < x-envoy-upstream-service-time: 0
+      < x-fault-injected-delay: 414.14ms
+      < x-fault-actual-upstream: 896.86µs
+      < x-fault-status: 503
+      < x-fault-added-delay: 413ms
+type: go
+longDescription: |
+  # Envoy Latency and Fault Distribution Simulation
+
+  An Envoy [dynamic module](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/dynamic_modules) **upstream HTTP filter** written in Go that injects latency and fault responses based on configurable percentile distributions.
+
+  This is similar to Envoy's built-in [fault injection filter](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/fault_filter.html) but adds support for **percentile-based latency distributions** with **per-status-code weighting** — allowing you to simulate realistic endpoint behavior including error rates, latency profiles, and load-dependent degradation.
+
+  **Key differentiator**:
+  By operating as an **upstream filter on the cluster**, this module measures the actual upstream response time and only injects the *remaining* delay needed to reach the target distribution value.
+  If the upstream is already slower than the target, no additional delay is added.
+
+  ## Features
+
+  - **Percentile-based latency injection**: Configure latency distributions using flexible percentile notation (`p0.0`, `p50.0`, `p99.9`, `p100.0`)
+  - **Per-status-code distributions**: Define different latency profiles for different HTTP status codes (e.g., 200s are fast, 503s are slow)
+  - **Resolution-based weighting**: Use `resolution` as both the relative weight for status selection and the number of latency samples per status in stateful mode
+  - **Load-based behavior**: Configure different response profiles based on the current in-flight request count with smooth grey-zone transitions
+  - **Grey zone penalties**: Model degradation with spike detection, penalty multipliers, and recovery rates
+  - **Route matching**: Apply different fault configurations via prefix/exact path matching and header matching
+  - **First-match routing**: Endpoints are evaluated in order; first match wins
+  - **Upstream-aware timing**: Measures actual upstream latency and only adds the remaining delay to reach the target — avoids over-delaying when the upstream is naturally slow
+
+  ## Comparison with Envoy's Built-in Fault Filter
+
+  | Feature | Built-in Fault Filter | This Module |
+  |---------|----------------------|-------------|
+  | Fixed delay | ✅ | ✅ (flat distribution) |
+  | Percentile distributions | ❌ | ✅ |
+  | Per-status-code distributions | ❌ | ✅ |
+  | Load-based degradation | ❌ | ✅ |
+  | HTTP abort | ✅ | ✅ |
+  | gRPC abort | ✅ | (planned) |
+  | Header-controlled faults | ✅ | ❌ (route-based instead) |
+  | Response rate limiting | ✅ | ❌ |
+  | Per-route configuration | Via per-route config | Built-in route matching |
+  | Runtime configuration | ✅ | ❌ |
+  | Precomputed per-status latency samples | ❌ | ✅ (stateful distribution) |
+
+  ## Configuration
+  Please find an overview of the possible fields below, followed by an actual example of how to configure the filter as a per cluster http filter.
+
+  ### Configuration Fields
+
+  Filter-level configuration retains `endpoints[]` for launchers that cannot express Envoy route
+  configuration. When this filter is configured through Envoy's `typed_per_filter_config`, the
+  per-route value must use the direct behavior shape: `responses` or `load_based` at the top level.
+  `endpoints[]` is rejected by the per-route configuration constructor because route matching is
+  performed by Envoy.
+
+  > [!NOTE]
+  > Per-route configuration is not currently accessible through the `boe` CLI. It requires direct
+  > control of the Envoy bootstrap configuration to add `typed_per_filter_config` to a route.
+
+  The sampled status is authoritative: a status different from upstream is returned as a local
+  response after any remaining configured delay. Matching statuses retain the upstream body and
+  headers. Configure `local_response` per response distribution to supply the forced response body
+  and headers. Omitted bodies are empty for sampled statuses below 400 and generated fault text for
+  statuses 400 and above; statuses 204, 205, and 304 must have an empty body. Envoy may remove
+  `Content-Type` for empty bodies and bodyless statuses.
+
+  | Field | Description |
+  |-------|-------------|
+  | `endpoints` | Array of endpoint configurations. First match wins. |
+  | `endpoints[].match` | Optional route selector; omitted or empty matches all requests |
+  | `endpoints[].match.prefix` | Match requests whose path starts with this prefix |
+  | `endpoints[].match.exact` | Match requests with exactly this path |
+  | `endpoints[].match.headers` | Array of header match conditions (all must match) |
+  | `endpoints[].responses` | Array of status-code distributions (weighted by resolution) |
+  | `endpoints[].responses[].status` | Terminal HTTP status code (200-599) |
+  | `endpoints[].responses[].local_response` | Optional body and response header pairs for a forced response |
+  | `endpoints[].responses[].local_response.body` | UTF-8 body; omitted means empty below 400 and generated fault text at 400 and above |
+  | `endpoints[].responses[].local_response.headers` | Optional header pairs; repeated names are retained and Envoy calculates `Content-Length` |
+  | `endpoints[].responses[].resolution` | Weight for status selection AND number of pre-computed samples |
+  | `endpoints[].responses[].distribution` | Percentile-to-duration mapping |
+  | `endpoints[].load_based` | Load-sensitive behavior configuration |
+  | `endpoints[].load_based.healthy` | Behavior below the healthy in-flight request threshold |
+  | `endpoints[].load_based.tipping_point` | Behavior above the tipping point in-flight request threshold |
+  | `endpoints[].load_based.grey_zone` | Transition parameters between healthy and tipping |
+  | `diagnostic` | Include the diagnostic `x-fault-worker-index` response header; defaults to `false` |
+  | `probability_distribution` | Select latency sampling mode: random interpolation (`stateless`) or precomputed latency samples (`stateful`). Status selection remains weighted-random in both modes. |
+
+  ### Percentile Keys
+
+  Percentile keys use the format `p<value>` where value is between 0 and 100:
+
+  | Key | Quantile |
+  |-----|----------|
+  | `p0.0` | 0th percentile (minimum) |
+  | `p25.0` | 25th percentile |
+  | `p50.0` | 50th percentile (median) |
+  | `p75.0` | 75th percentile |
+  | `p90.0` | 90th percentile |
+  | `p95.0` | 95th percentile |
+  | `p99.0` | 99th percentile |
+  | `p99.9` | 99.9th percentile |
+  | `p99.99` | 99.99th percentile |
+  | `p100.0` | 100th percentile (maximum) |
+
+  Distribution values must be non-decreasing (a higher percentile cannot have a shorter duration).
+
+  ### Grey Zone Configuration
+
+  | Field | Description |
+  |-------|-------------|
+  | `penalty_base` | Base latency penalty at full grey zone position (e.g., "50ms") |
+  | `spike_threshold` | Grey zone position (0-1) above which spike behavior activates |
+  | `spike_penalty_duration` | Recovery window after load drops below the spike threshold (e.g., "2s") |
+  | `spike_penalty_multiplier` | Multiplier applied to base penalty during spikes |
+  | `recovery_rate` | Rate at which spike penalty decays (0-1) |
+
+  ## How It Works
+
+  ### Status Code Selection
+
+  Each endpoint has one or more response entries with a `resolution` that serves as both:
+  1. **Weight**: The probability of selecting that status code (proportional to total resolution)
+  2. **Accuracy**: The number of pre-computed latency samples for that status code's distribution
+
+  For example, with `resolution: 900` for status 200 and `resolution: 100` for status 503, each
+  request has a 90% chance of selecting status 200 and a 10% chance of selecting status 503. The
+  selected status is returned even when it differs from upstream; observed status counts approach
+  the configured weights over time.
+
+  ### Latency Distribution
+
+  The stateful probability distribution is inspired by [distribution-calculator](https://github.com/spockz/distribution-calculator). Given a set of percentiles, it:
+
+  1. Precomputes latency samples based on `resolution` by interpolating between percentile boundaries
+  2. Shuffles and serves them in random order
+  3. The samples approximate the configured percentiles; status selection remains independently weighted-random, and observed latency cannot be lower than upstream latency
+
+  ### Load-Based Behavior
+
+  When `load_based` is configured, the process-global active-request count is passed as the current load value:
+  - At or below `healthy.threshold_in_flight`: Uses the healthy response distribution
+  - At or above `tipping_point.threshold_in_flight`: Uses the tipping point distribution
+  - Between the two (**grey zone**): Probabilistically mixes between healthy and tipping based on position, with optional penalty
+
+  ### Grey Zone Transitions
+
+  In the grey zone, the filter:
+  1. Calculates position as `(currentInFlight - healthyThreshold) / (tippingThreshold - healthyThreshold)` (0.0 to 1.0)
+  2. Selects healthy or tipping distribution proportionally to position
+  3. Adds a base latency penalty scaled by position
+  4. While position is at or above `spike_threshold`, keeps the spike multiplier active
+  5. Starts recovery on the first observed drop below the threshold. For `spike_penalty_duration`, the penalty is `basePenalty * spike_penalty_multiplier * (1 - elapsed / spike_penalty_duration * recovery_rate)`, then returns to the base penalty. A renewed spike resets recovery
+
+  Spike state follows load observations in every tier. The tipping tier sustains a spike;
+  the healthy tier starts or advances recovery. Additional penalties apply only in the grey zone.
+
+  ## Response Headers
+
+  The filter adds response headers to indicate what was injected:
+
+  | Header | Description |
+  |--------|-------------|
+  | `x-fault-injected-delay` | Target duration from the distribution (e.g., "52.3ms") |
+  | `x-fault-actual-upstream` | Actual time the upstream took to respond |
+  | `x-fault-added-delay` | Additional delay injected (target - upstream), or `0s` when none was added |
+  | `x-fault-requests-in-flight` | Process-global in-flight matched request count observed at request entry, before the request is added |
+  | `x-fault-worker-index` | Envoy worker index that made the fault decision; only included when `diagnostic` is `true` |
+  | `x-fault-injected` | "response" when a sampled status below 400 overrides upstream, otherwise "abort" |
+  | `x-fault-status` | The status code selected by the distribution |
+  | `x-fault-upstream-status` | The original upstream status code, including when replaced by the sampled status |
+
+  For matched responses, these attributes are also recorded on the active span when one is available,
+  using the `fault.` prefix (for example, `fault.status` and `fault.upstream-status`). This preserves
+  visibility into backend failures even when the sampled response is successful.
+
+  ### Performance considerations
+
+  The `stateful` and `stateless` probability distributions have different CPU,
+  memory, and concurrency characteristics. The benchmark sources in
+  `performance_bench_test.go`, `endpoint_bench_test.go`,
+  `internal/fault/performance_bench_test.go`, and `performance/` reproduce the
+  measurements below.
+
+  Use `stateful` when CPU efficiency and precomputed latency samples are
+  important; it remains the default. Use `stateless` for high-concurrency,
+  throughput-sensitive configurations where lower contention, tail latency, and
+  resolution-independent memory matter more, accepting higher CPU use. Load-based
+  configurations show little difference because their outer mutex dominates both
+  modes.

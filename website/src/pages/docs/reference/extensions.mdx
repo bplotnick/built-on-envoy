@@ -839,6 +839,225 @@ If true, forward queries to upstream resolvers when a CIDR range is exhausted. D
 
 
 
+<a id="dynamic-fault-injection"></a>
+## Dynamic Fault Injection Configuration
+
+Configuration for the dynamic fault injection filter. Filter-level configuration may define endpoint selectors; per-route configuration defines direct response distributions or load-based behavior.
+
+### diagnostic
+
+Includes the Envoy worker index diagnostic response header.
+
+| | |
+|---|---|
+| **Type** | `boolean` |
+| **Required** | No |
+
+[↑ Top](#) | [↑ Dynamic Fault Injection Configuration](#dynamic-fault-injection) {/* if .SubProperties */}
+
+### endpoints
+
+List of endpoint configurations, each defining fault behavior for matched routes.
+
+| | |
+|---|---|
+| **Type** | `[]object` |
+| **Required** | No |
+
+[↑ Top](#) | [↑ Dynamic Fault Injection Configuration](#dynamic-fault-injection)
+
+
+
+#### endpoints.load_based
+
+Load-based response distribution that switches behavior based on the process-global count of matched requests currently in flight.
+
+| | |
+|---|---|
+| **Type** | `object` |
+| **Required** | No |
+
+[↑ Top](#) | [↑ Dynamic Fault Injection Configuration](#dynamic-fault-injection)
+
+
+
+#### endpoints.match
+
+Optional route matching configuration. Omit or leave empty to match all requests.
+
+| | |
+|---|---|
+| **Type** | `object` |
+| **Required** | No |
+
+[↑ Top](#) | [↑ Dynamic Fault Injection Configuration](#dynamic-fault-injection)
+
+
+
+#### endpoints.responses
+
+Response distributions. Resolution acts as both relative weight and sample count.
+
+| | |
+|---|---|
+| **Type** | [[]statusDistribution](#dynamic-fault-injection-statusDistribution) |
+| **Required** | No |
+| **Min items** | 1 |
+
+[↑ Top](#) | [↑ Dynamic Fault Injection Configuration](#dynamic-fault-injection)
+
+   {/* range .SubProperties */} {/* if .SubProperties */}
+
+### load_based
+
+Direct load-based behavior for per-route configuration.
+
+| | |
+|---|---|
+| **Type** | [#/properties/endpoints/items/properties/load_based](#dynamic-fault-injection-#/properties/endpoints/items/properties/load_based) |
+| **Required** | No |
+
+[↑ Top](#) | [↑ Dynamic Fault Injection Configuration](#dynamic-fault-injection) {/* if .SubProperties */}
+
+### probability_distribution
+
+Selects latency sampling mode for response distributions. Status selection remains weighted-random in both modes.
+
+| | |
+|---|---|
+| **Type** | `string` |
+| **Required** | No |
+| **Allowed values** | `stateful`, `stateless` |
+
+[↑ Top](#) | [↑ Dynamic Fault Injection Configuration](#dynamic-fault-injection) {/* if .SubProperties */}
+
+### responses
+
+Direct response distributions for per-route configuration.
+
+| | |
+|---|---|
+| **Type** | [[]statusDistribution](#dynamic-fault-injection-statusDistribution) |
+| **Required** | No |
+| **Min items** | 1 |
+
+[↑ Top](#) | [↑ Dynamic Fault Injection Configuration](#dynamic-fault-injection) {/* if .SubProperties */} {/* range .Properties */}
+
+
+
+<a id="dynamic-fault-injection-localResponse"></a>
+### Custom type: localResponse
+
+Customizes a forced response. Omitted bodies are empty for sampled statuses below 400 and preserve generated fault text for statuses 400 and above. Statuses 204, 205, and 304 reject nonempty bodies. Envoy may remove Content-Type for empty bodies and bodyless statuses.
+
+#### body
+
+Response body encoded as UTF-8.
+
+| | |
+|---|---|
+| **Type** | `string` |
+| **Required** | No |
+
+[↑ Top](#) | [↑ Dynamic Fault Injection Configuration](#dynamic-fault-injection)
+
+#### headers
+
+Header pairs added to the local response. Repeated names are retained; Envoy supplies Content-Length.
+
+| | |
+|---|---|
+| **Type** | [[]localResponseHeader](#dynamic-fault-injection-localResponseHeader) |
+| **Required** | No |
+
+[↑ Top](#) | [↑ Dynamic Fault Injection Configuration](#dynamic-fault-injection) {/* range .Properties */}
+
+<a id="dynamic-fault-injection-localResponseHeader"></a>
+### Custom type: localResponseHeader
+
+
+
+#### name
+
+HTTP header field name.
+
+| | |
+|---|---|
+| **Type** | `string` |
+| **Required** | Yes |
+| **Pattern** | `^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$` |
+
+[↑ Top](#) | [↑ Dynamic Fault Injection Configuration](#dynamic-fault-injection)
+
+#### value
+
+HTTP header field value; control characters are rejected.
+
+| | |
+|---|---|
+| **Type** | `string` |
+| **Required** | Yes |
+| **Pattern** | `^[^\x00-\x08\x0A-\x1F\x7F]*$` |
+
+[↑ Top](#) | [↑ Dynamic Fault Injection Configuration](#dynamic-fault-injection) {/* range .Properties */}
+
+<a id="dynamic-fault-injection-statusDistribution"></a>
+### Custom type: statusDistribution
+
+
+
+#### distribution
+
+Percentile-to-duration mapping (e.g., "p50.0": "10ms").
+
+| | |
+|---|---|
+| **Type** | `object` |
+| **Required** | Yes |
+
+[↑ Top](#) | [↑ Dynamic Fault Injection Configuration](#dynamic-fault-injection)
+
+#### local_response
+
+
+
+| | |
+|---|---|
+| **Type** | [localResponse](#dynamic-fault-injection-localResponse) |
+| **Required** | No |
+
+[↑ Top](#) | [↑ Dynamic Fault Injection Configuration](#dynamic-fault-injection)
+
+#### resolution
+
+Relative weight and number of pre-computed samples.
+
+| | |
+|---|---|
+| **Type** | `integer` |
+| **Required** | Yes |
+
+[↑ Top](#) | [↑ Dynamic Fault Injection Configuration](#dynamic-fault-injection)
+
+#### status
+
+Terminal HTTP status code for this response class (200-599).
+
+| | |
+|---|---|
+| **Type** | `integer` |
+| **Required** | Yes |
+
+[↑ Top](#) | [↑ Dynamic Fault Injection Configuration](#dynamic-fault-injection) {/* range .Properties */}
+
+<a id="dynamic-fault-injection-statusDistributions"></a>
+### Custom type: statusDistributions
+
+ {/* range .Properties */} {/* range .CustomTypes */} {/* if .CustomTypes */}
+
+
+
+
 <a id="file-server"></a>
 ## File Server Configuration
 
