@@ -1,7 +1,7 @@
 [
   {
     "name": "anthropic-messages-decoder",
-    "version": "0.10.0-dev",
+    "version": "0.13.0-dev",
     "parent": "composer",
     "categories": [
       "AI",
@@ -50,13 +50,13 @@
     ],
     "minEnvoyVersion": "1.38.0",
     "maxEnvoyVersion": "1.39.0",
-    "composerVersion": "0.10.0-dev",
+    "composerVersion": "0.13.0-dev",
     "sourcePath": "composer/anthropic-decoder",
     "configReferencePath": "/docs/reference/extensions#anthropic-messages-decoder"
   },
   {
     "name": "azure-content-safety",
-    "version": "0.10.0-dev",
+    "version": "0.13.0-dev",
     "parent": "composer",
     "categories": [
       "Security",
@@ -118,13 +118,13 @@
     ],
     "minEnvoyVersion": "1.38.0",
     "maxEnvoyVersion": "1.39.0",
-    "composerVersion": "0.10.0-dev",
+    "composerVersion": "0.13.0-dev",
     "sourcePath": "composer/azure-content-safety",
     "configReferencePath": "/docs/reference/extensions#azure-content-safety"
   },
   {
     "name": "bedrock-guardrails",
-    "version": "0.10.0-dev",
+    "version": "0.13.0-dev",
     "parent": "composer",
     "categories": [
       "AI",
@@ -169,13 +169,13 @@
     ],
     "minEnvoyVersion": "1.38.0",
     "maxEnvoyVersion": "1.39.0",
-    "composerVersion": "0.10.0-dev",
+    "composerVersion": "0.13.0-dev",
     "sourcePath": "composer/bedrock-guardrails",
     "configReferencePath": "/docs/reference/extensions#bedrock-guardrails"
   },
   {
     "name": "cedar-auth",
-    "version": "0.10.0-dev",
+    "version": "0.13.0-dev",
     "parent": "composer",
     "categories": [
       "Security"
@@ -249,13 +249,13 @@
     ],
     "minEnvoyVersion": "1.38.0",
     "maxEnvoyVersion": "1.39.0",
-    "composerVersion": "0.10.0-dev",
+    "composerVersion": "0.13.0-dev",
     "sourcePath": "composer/cedar",
     "configReferencePath": "/docs/reference/extensions#cedar-auth"
   },
   {
     "name": "chat-completions-decoder",
-    "version": "0.10.0-dev",
+    "version": "0.13.0-dev",
     "parent": "composer",
     "categories": [
       "AI",
@@ -304,13 +304,13 @@
     ],
     "minEnvoyVersion": "1.38.0",
     "maxEnvoyVersion": "1.39.0",
-    "composerVersion": "0.10.0-dev",
+    "composerVersion": "0.13.0-dev",
     "sourcePath": "composer/chat-completions-decoder",
     "configReferencePath": "/docs/reference/extensions#chat-completions-decoder"
   },
   {
     "name": "cluster-router",
-    "version": "0.10.0-dev",
+    "version": "0.13.0-dev",
     "parent": "composer",
     "categories": [
       "Traffic Control",
@@ -346,13 +346,13 @@
     ],
     "minEnvoyVersion": "1.38.0",
     "maxEnvoyVersion": "1.39.0",
-    "composerVersion": "0.10.0-dev",
+    "composerVersion": "0.13.0-dev",
     "sourcePath": "composer/cluster-router",
     "configReferencePath": "/docs/reference/extensions#cluster-router"
   },
   {
     "name": "coraza-waf",
-    "version": "0.10.0-dev",
+    "version": "0.13.0-dev",
     "parent": "composer",
     "categories": [
       "Security"
@@ -360,7 +360,7 @@
     "author": "Tetrate",
     "featured": true,
     "description": "Web Application Firewall (WAF) for HTTP traffic using Coraza",
-    "longDescription": "A Web Application Firewall (WAF) HTTP filter plugin that provides layer 7 security\nfor web applications using the [Coraza WAF engine](https://coraza.io/).\n\n## Features\n\nThis plugin provides comprehensive web application security:\n\n- **[OWASP CRS (Core Rule Set)](https://coreruleset.org/)**: Built-in protection against common web attacks\n- **Request inspection**: Analyzes HTTP requests for malicious patterns and anomalies\n- **Response inspection**: Examines HTTP responses to prevent data leakage\n- **Flexible rule engine**: Supports custom security rules and policies\n- **Multiple operation modes**: Detection-only or active blocking modes\n- **Detailed logging**: Comprehensive audit logging of security events\n\n## Security Rules\n\nThe WAF comes with support for OWASP CRS, formerly known as ModSecurity Core Rule Set (CRS), as well as\nsome recommended configurations and allows custom rule configuration for specific security requirements.\nIt is recommended to **review the provided configuration files** before deploying, to ensure they align with\nthe target environment and the expected security posture.\nTo use the bundled rules, you can include them with the Coraza `Include` directives as shown in this example:\n\n```json\n{\n  \"directives\": [\n    \"Include @coraza.conf\",\n    \"Include @crs-setup.conf\",\n    \"Include @owasp_crs/*.conf\"\n  ]\n}\n```\n\nAvailable special names are:\n\n| Name | Aliases | Description |\n|---|---|---|\n| `@coraza.conf-recommended` | — | Coraza upstream configuration file example |\n| [`@coraza.conf`](https://github.com/tetratelabs/built-on-envoy/blob/main/extensions/composer/waf/coraza/directives/%40coraza.conf) | `@recommended.conf`, `@recommended-conf` | Coraza configuration file tailored for Coraza dynamic module implementation |\n| `@crs-setup.conf.example` | — | CRS upstream configuration file example |\n| [`@crs-setup.conf`](https://github.com/tetratelabs/built-on-envoy/blob/main/extensions/composer/waf/coraza/directives/%40crs-setup.conf) | `@crs-setup-conf` | CRS configuration file tailored for Coraza dynamic module implementation |\n| `@owasp_crs/` | — | CRS rules directory |\n\nNote: Aliases are provided for backward compatibility, but are deprecated and may be removed in future releases. It is recommended to use the primary names for new configurations.\n\nTo create custom rules, refer to the [SecLang reference docs](https://coraza.io/docs/seclang/).\n\n## Mode\n\nThe optional `mode` setting controls which parts of the HTTP exchange are evaluated by the WAF.\nUse the narrowest mode that matches your policy to avoid unnecessary processing.\n\n- `REQUEST_ONLY` (default): Inspect request headers, body, and trailers only. Best for deployments\n  that focus on inbound only attack detection.\n- `FULL`: Inspect both request and response phases. Best for a fully deployed WAF with OWASP CRS\n  usage.\n- `RESPONSE_ONLY` (deprecated): Inspect the response phase only, skipping request-phase rule\n  evaluation. Retained for backward compatibility and will be removed in a future release.\n  Note: response only mode is not compatibile with a default OWASP CRS installation because it\n  skips request-phase initialization.\n\n```json\n{\n  \"mode\": \"FULL\",\n  \"directives\": [\n    \"Include @coraza.conf\",\n    \"Include @crs-setup.conf\",\n    \"Include @owasp_crs/*.conf\"\n  ]\n}\n```\n\nNote: `mode` only decides which request and response phases are passed to Coraza. It does not enable body access\nby itself. For example, `FULL` allows response-phase evaluation, but response body inspection still requires\ndirectives such as `SecResponseBodyAccess On`.\n\n## Metadata\n\nThe plugin emits the following filter dynamic metadata when requests are blocked by the WAF:\n\n| Namespace | Key | Description |\n|-----------|-----|-------------|\n| `io.builtonenvoy.waf` | `block_phase` | Phase in which the requests has been blocked. See the [execution flow](https://coraza.io/docs/seclang/execution-flow/) for details on the possible values. |\n| `io.builtonenvoy.waf` | `block_rule` | ID of the rule that triggered the block. |\n\n## Metrics\n\nThe extension exposes the following metrics:\n\n| Metric | Tags | Type | Description |\n|--------|------|------|-------------|\n| `waf_tx_total` | - | Counter | Total amount of transactions processed by the WAF. |\n| `waf_tx_blocked` | `authority`, `phase`, `rule_id` | Counter | Total amount of transactions blocked by the WAF. The `rule_id` will not be set if the request is not blocked by a concrete rule but by a WAF internal error. |\n| `waf_tx_duration` | - | Histogram | Duration of WAF transaction processing, in milliseconds. |\n\n## Per Route Configuration\n\nThe extension supports per-route configuration, allowing you to specify different WAF rules and policies for different routes in your application. This is useful for tailoring security measures to specific endpoints or services.\n\nThe per-route configuration share the same format as the extension configuration and see Envoy's [Dynamic Per Route Configuration](https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/http/dynamic_modules/v3/dynamic_modules.proto) for more details on how to set it up.\n",
+    "longDescription": "A Web Application Firewall (WAF) HTTP filter plugin that provides layer 7 security\nfor web applications using the [Coraza WAF engine](https://coraza.io/).\n\n## Features\n\nThis plugin provides comprehensive web application security:\n\n- **[OWASP CRS (Core Rule Set)](https://coreruleset.org/)**: Built-in protection against common web attacks\n- **Request inspection**: Analyzes HTTP requests for malicious patterns and anomalies\n- **Response inspection**: Examines HTTP responses to prevent data leakage\n- **Flexible rule engine**: Supports custom security rules and policies\n- **Multiple operation modes**: Detection-only or active blocking modes\n- **Detailed logging**: Comprehensive audit logging of security events\n\n## Security Rules\n\nThe WAF comes with support for OWASP CRS, formerly known as ModSecurity Core Rule Set (CRS), as well as\nsome recommended configurations and allows custom rule configuration for specific security requirements.\nIt is recommended to **review the provided configuration files** before deploying, to ensure they align with\nthe target environment and the expected security posture.\nTo use the bundled rules, you can include them with the Coraza `Include` directives as shown in this example:\n\n```json\n{\n  \"directives\": [\n    \"Include @coraza.conf\",\n    \"Include @crs-setup.conf\",\n    \"Include @owasp_crs/*.conf\"\n  ]\n}\n```\n\nAvailable special names are:\n\n| Name | Aliases | Description |\n|---|---|---|\n| `@coraza.conf-recommended` | — | Coraza upstream configuration file example |\n| [`@coraza.conf`](https://github.com/tetratelabs/built-on-envoy/blob/main/extensions/composer/waf/coraza/directives/%40coraza.conf) | `@recommended.conf`, `@recommended-conf` | Coraza configuration file tailored for Coraza dynamic module implementation |\n| `@crs-setup.conf.example` | — | CRS upstream configuration file example |\n| [`@crs-setup.conf`](https://github.com/tetratelabs/built-on-envoy/blob/main/extensions/composer/waf/coraza/directives/%40crs-setup.conf) | `@crs-setup-conf` | CRS configuration file tailored for Coraza dynamic module implementation |\n| `@owasp_crs/` | — | CRS rules directory |\n\nNote: Aliases are provided for backward compatibility, but are deprecated and may be removed in future releases. It is recommended to use the primary names for new configurations.\n\nTo create custom rules, refer to the [SecLang reference docs](https://coraza.io/docs/seclang/).\n\n## Mode\n\nThe optional `mode` setting controls which parts of the HTTP exchange are evaluated by the WAF.\nUse the narrowest mode that matches your policy to avoid unnecessary processing.\n\n- `REQUEST_ONLY` (default): Inspect request headers, body, and trailers only. Best for deployments\n  that focus on inbound only attack detection.\n- `FULL`: Inspect both request and response phases. Best for a fully deployed WAF with OWASP CRS\n  usage.\n- `RESPONSE_ONLY` (deprecated): Inspect the response phase only, skipping request-phase rule\n  evaluation. Retained for backward compatibility and will be removed in a future release.\n  Note: response only mode is not compatibile with a default OWASP CRS installation because it\n  skips request-phase initialization.\n\n```json\n{\n  \"mode\": \"FULL\",\n  \"directives\": [\n    \"Include @coraza.conf\",\n    \"Include @crs-setup.conf\",\n    \"Include @owasp_crs/*.conf\"\n  ]\n}\n```\n\nNote: `mode` only decides which request and response phases are passed to Coraza. It does not enable body access\nby itself. For example, `FULL` allows response-phase evaluation, but response body inspection still requires\ndirectives such as `SecResponseBodyAccess On`.\n\n## Metadata\n\nThe plugin emits the following filter dynamic metadata when requests are blocked by the WAF:\n\n| Namespace | Key | Description |\n|-----------|-----|-------------|\n| `io.builtonenvoy.waf` | `block_phase` | Phase in which the requests has been blocked. See the [execution flow](https://coraza.io/docs/seclang/execution-flow/) for details on the possible values. |\n| `io.builtonenvoy.waf` | `block_rule` | ID of the rule that triggered the block. |\n\n## Metrics\n\nThe extension exposes the following metrics:\n\n| Metric | Tags | Type | Description |\n|--------|------|------|-------------|\n| `waf_tx_total` | - | Counter | Total amount of transactions processed by the WAF. |\n| `waf_tx_blocked` | `authority`, `phase`, `rule_id` | Counter | Total amount of transactions blocked by the WAF. The `rule_id` will not be set if the request is not blocked by a concrete rule but by a WAF internal error. |\n| `waf_tx_duration` | - | Histogram | Duration of WAF processing the transaction, in microseconds. |\n\n### Histogram resolution\n\nEnvoy records dynamic-module histograms without a unit, so its default bucket\nbounds apply verbatim to the microsecond values of `waf_tx_duration`. Two\nconsequences:\n\n- Typical CRS evaluation lands in the ~0.5–10 ms range, which the default\n  bounds cover with only five buckets (`500, 1000, 2500, 5000, 10000`).\n- The largest finite bound is 3,600,000 µs (3.6 s). `_sum`/`_count` and the\n  admin-interface quantiles stay correct above it, but PromQL's\n  `histogram_quantile()` clamps any quantile falling past the last finite\n  bound to that bound.\n\nBoth can be tuned in the Envoy bootstrap configuration, without touching the\nextension. Two details about the matcher, both of which fail silently when\nmissed: it sees the stat name before tag extraction, i.e. with the\n`dynamicmodulescustom.` prefix, and `safe_regex` is matched against the whole\nname — hence the leading `.*` below.\n\n```yaml\nstats_config:\n  histogram_bucket_settings:\n    - match:\n        safe_regex:\n          regex: \".*waf_tx_duration\"\n      # Sharper resolution across typical CRS latencies; ceiling at 10 s.\n      buckets: [100, 250, 500, 750, 1000, 1500, 2500, 5000, 10000, 25000, 100000, 1000000, 10000000]\n```\n\n## Per Route Configuration\n\nThe extension supports per-route configuration, allowing you to specify different WAF rules and policies for different routes in your application. This is useful for tailoring security measures to specific endpoints or services.\n\nThe per-route configuration share the same format as the extension configuration and see Envoy's [Dynamic Per Route Configuration](https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/http/dynamic_modules/v3/dynamic_modules.proto) for more details on how to set it up.\n",
     "type": "go",
     "filterType": [
       "http"
@@ -390,9 +390,46 @@
     ],
     "minEnvoyVersion": "1.38.0",
     "maxEnvoyVersion": "1.39.0",
-    "composerVersion": "0.10.0-dev",
+    "composerVersion": "0.13.0-dev",
     "sourcePath": "composer/waf",
     "configReferencePath": "/docs/reference/extensions#coraza-waf"
+  },
+  {
+    "name": "dynamic-fault-injection",
+    "version": "0.13.0-dev",
+    "parent": "composer",
+    "categories": [
+      "Traffic Control",
+      "Performance"
+    ],
+    "author": "Alessandro Vermeulen",
+    "description": "A dynamic fault injection filter that simulates latency distributions and error responses.",
+    "longDescription": "# Envoy Latency and Fault Distribution Simulation\n\nAn Envoy [dynamic module](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/dynamic_modules) **upstream HTTP filter** written in Go that injects latency and fault responses based on configurable percentile distributions.\n\nThis is similar to Envoy's built-in [fault injection filter](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/fault_filter.html) but adds support for **percentile-based latency distributions** with **per-status-code weighting** — allowing you to simulate realistic endpoint behavior including error rates, latency profiles, and load-dependent degradation.\n\n**Key differentiator**:\nBy operating as an **upstream filter on the cluster**, this module measures the actual upstream response time and only injects the *remaining* delay needed to reach the target distribution value.\nIf the upstream is already slower than the target, no additional delay is added.\n\n## Features\n\n- **Percentile-based latency injection**: Configure latency distributions using flexible percentile notation (`p0.0`, `p50.0`, `p99.9`, `p100.0`)\n- **Per-status-code distributions**: Define different latency profiles for different HTTP status codes (e.g., 200s are fast, 503s are slow)\n- **Resolution-based weighting**: Use `resolution` as both the relative weight for status selection and the number of latency samples per status in stateful mode\n- **Load-based behavior**: Configure different response profiles based on the current in-flight request count with smooth grey-zone transitions\n- **Grey zone penalties**: Model degradation with spike detection, penalty multipliers, and recovery rates\n- **Route matching**: Apply different fault configurations via prefix/exact path matching and header matching\n- **First-match routing**: Endpoints are evaluated in order; first match wins\n- **Upstream-aware timing**: Measures actual upstream latency and only adds the remaining delay to reach the target — avoids over-delaying when the upstream is naturally slow\n\n## Comparison with Envoy's Built-in Fault Filter\n\n| Feature | Built-in Fault Filter | This Module |\n|---------|----------------------|-------------|\n| Fixed delay | ✅ | ✅ (flat distribution) |\n| Percentile distributions | ❌ | ✅ |\n| Per-status-code distributions | ❌ | ✅ |\n| Load-based degradation | ❌ | ✅ |\n| HTTP abort | ✅ | ✅ |\n| gRPC abort | ✅ | (planned) |\n| Header-controlled faults | ✅ | ❌ (route-based instead) |\n| Response rate limiting | ✅ | ❌ |\n| Per-route configuration | Via per-route config | Built-in route matching |\n| Runtime configuration | ✅ | ❌ |\n| Precomputed per-status latency samples | ❌ | ✅ (stateful distribution) |\n\n## Configuration\nPlease find an overview of the possible fields below, followed by an actual example of how to configure the filter as a per cluster http filter.\n\n### Configuration Fields\n\nFilter-level configuration retains `endpoints[]` for launchers that cannot express Envoy route\nconfiguration. When this filter is configured through Envoy's `typed_per_filter_config`, the\nper-route value must use the direct behavior shape: `responses` or `load_based` at the top level.\n`endpoints[]` is rejected by the per-route configuration constructor because route matching is\nperformed by Envoy.\n\n\u003e [!NOTE]\n\u003e Per-route configuration is not currently accessible through the `boe` CLI. It requires direct\n\u003e control of the Envoy bootstrap configuration to add `typed_per_filter_config` to a route.\n\nThe sampled status is authoritative: a status different from upstream is returned as a local\nresponse after any remaining configured delay. Matching statuses retain the upstream body and\nheaders. Configure `local_response` per response distribution to supply the forced response body\nand headers. Omitted bodies are empty for sampled statuses below 400 and generated fault text for\nstatuses 400 and above; statuses 204, 205, and 304 must have an empty body. Envoy may remove\n`Content-Type` for empty bodies and bodyless statuses.\n\n| Field | Description |\n|-------|-------------|\n| `endpoints` | Array of endpoint configurations. First match wins. |\n| `endpoints[].match` | Optional route selector; omitted or empty matches all requests |\n| `endpoints[].match.prefix` | Match requests whose path starts with this prefix |\n| `endpoints[].match.exact` | Match requests with exactly this path |\n| `endpoints[].match.headers` | Array of header match conditions (all must match) |\n| `endpoints[].responses` | Array of status-code distributions (weighted by resolution) |\n| `endpoints[].responses[].status` | Terminal HTTP status code (200-599) |\n| `endpoints[].responses[].local_response` | Optional body and response header pairs for a forced response |\n| `endpoints[].responses[].local_response.body` | UTF-8 body; omitted means empty below 400 and generated fault text at 400 and above |\n| `endpoints[].responses[].local_response.headers` | Optional header pairs; repeated names are retained and Envoy calculates `Content-Length` |\n| `endpoints[].responses[].resolution` | Weight for status selection AND number of pre-computed samples |\n| `endpoints[].responses[].distribution` | Percentile-to-duration mapping |\n| `endpoints[].load_based` | Load-sensitive behavior configuration |\n| `endpoints[].load_based.healthy` | Behavior below the healthy in-flight request threshold |\n| `endpoints[].load_based.tipping_point` | Behavior above the tipping point in-flight request threshold |\n| `endpoints[].load_based.grey_zone` | Transition parameters between healthy and tipping |\n| `diagnostic` | Include the diagnostic `x-fault-worker-index` response header; defaults to `false` |\n| `probability_distribution` | Select latency sampling mode: random interpolation (`stateless`) or precomputed latency samples (`stateful`). Status selection remains weighted-random in both modes. |\n\n### Percentile Keys\n\nPercentile keys use the format `p\u003cvalue\u003e` where value is between 0 and 100:\n\n| Key | Quantile |\n|-----|----------|\n| `p0.0` | 0th percentile (minimum) |\n| `p25.0` | 25th percentile |\n| `p50.0` | 50th percentile (median) |\n| `p75.0` | 75th percentile |\n| `p90.0` | 90th percentile |\n| `p95.0` | 95th percentile |\n| `p99.0` | 99th percentile |\n| `p99.9` | 99.9th percentile |\n| `p99.99` | 99.99th percentile |\n| `p100.0` | 100th percentile (maximum) |\n\nDistribution values must be non-decreasing (a higher percentile cannot have a shorter duration).\n\n### Grey Zone Configuration\n\n| Field | Description |\n|-------|-------------|\n| `penalty_base` | Base latency penalty at full grey zone position (e.g., \"50ms\") |\n| `spike_threshold` | Grey zone position (0-1) above which spike behavior activates |\n| `spike_penalty_duration` | Recovery window after load drops below the spike threshold (e.g., \"2s\") |\n| `spike_penalty_multiplier` | Multiplier applied to base penalty during spikes |\n| `recovery_rate` | Rate at which spike penalty decays (0-1) |\n\n## How It Works\n\n### Status Code Selection\n\nEach endpoint has one or more response entries with a `resolution` that serves as both:\n1. **Weight**: The probability of selecting that status code (proportional to total resolution)\n2. **Accuracy**: The number of pre-computed latency samples for that status code's distribution\n\nFor example, with `resolution: 900` for status 200 and `resolution: 100` for status 503, each\nrequest has a 90% chance of selecting status 200 and a 10% chance of selecting status 503. The\nselected status is returned even when it differs from upstream; observed status counts approach\nthe configured weights over time.\n\n### Latency Distribution\n\nThe stateful probability distribution is inspired by [distribution-calculator](https://github.com/spockz/distribution-calculator). Given a set of percentiles, it:\n\n1. Precomputes latency samples based on `resolution` by interpolating between percentile boundaries\n2. Shuffles and serves them in random order\n3. The samples approximate the configured percentiles; status selection remains independently weighted-random, and observed latency cannot be lower than upstream latency\n\n### Load-Based Behavior\n\nWhen `load_based` is configured, the process-global active-request count is passed as the current load value:\n- At or below `healthy.threshold_in_flight`: Uses the healthy response distribution\n- At or above `tipping_point.threshold_in_flight`: Uses the tipping point distribution\n- Between the two (**grey zone**): Probabilistically mixes between healthy and tipping based on position, with optional penalty\n\n### Grey Zone Transitions\n\nIn the grey zone, the filter:\n1. Calculates position as `(currentInFlight - healthyThreshold) / (tippingThreshold - healthyThreshold)` (0.0 to 1.0)\n2. Selects healthy or tipping distribution proportionally to position\n3. Adds a base latency penalty scaled by position\n4. While position is at or above `spike_threshold`, keeps the spike multiplier active\n5. Starts recovery on the first observed drop below the threshold. For `spike_penalty_duration`, the penalty is `basePenalty * spike_penalty_multiplier * (1 - elapsed / spike_penalty_duration * recovery_rate)`, then returns to the base penalty. A renewed spike resets recovery\n\nSpike state follows load observations in every tier. The tipping tier sustains a spike;\nthe healthy tier starts or advances recovery. Additional penalties apply only in the grey zone.\n\n## Response Headers\n\nThe filter adds response headers to indicate what was injected:\n\n| Header | Description |\n|--------|-------------|\n| `x-fault-injected-delay` | Target duration from the distribution (e.g., \"52.3ms\") |\n| `x-fault-actual-upstream` | Actual time the upstream took to respond |\n| `x-fault-added-delay` | Additional delay injected (target - upstream); omitted when no delay was added |\n| `x-fault-requests-in-flight` | Process-global in-flight matched request count observed at request entry, before the request is added |\n| `x-fault-worker-index` | Envoy worker index that made the fault decision; only included when `diagnostic` is `true` |\n| `x-fault-injected` | \"response\" when a sampled status below 400 overrides upstream, otherwise \"abort\" |\n| `x-fault-status` | The status code selected by the distribution |\n| `x-fault-upstream-status` | The original upstream status code, including when replaced by the sampled status |\n\nFor matched responses, these attributes are also recorded on the active span when one is available,\nusing the `fault.` prefix (for example, `fault.status` and `fault.upstream-status`). This preserves\nvisibility into backend failures even when the sampled response is successful.\n\n### Performance considerations\n\nThe `stateful` and `stateless` probability distributions have different CPU,\nmemory, and concurrency characteristics. The benchmark sources in\n`performance_bench_test.go`, `endpoint_bench_test.go`,\n`internal/fault/performance_bench_test.go`, and `performance/` reproduce the\nmeasurements below.\n\nUse `stateful` when CPU efficiency and precomputed latency samples are\nimportant; it remains the default. Use `stateless` for high-concurrency,\nthroughput-sensitive configurations where lower contention, tail latency, and\nresolution-independent memory matter more, accepting higher CPU use. Load-based\nconfigurations show little difference because their outer mutex dominates both\nmodes.\n",
+    "type": "go",
+    "filterType": [
+      "http"
+    ],
+    "tags": [
+      "go",
+      "http",
+      "filter",
+      "fault-injection",
+      "latency",
+      "testing"
+    ],
+    "license": "Apache-2.0",
+    "examples": [
+      {
+        "title": "Delay all success responses and introduce a 1% failure rate that returns quickly",
+        "description": "Wrap a succesfully and fast responding mock or stub service and make it a one matching the production performance and error ratio.\n",
+        "code": "CONFIG=$(cat \u003c\u003c-END\n{\n  \"endpoints\": [\n    {\n      \"match\": {\n        \"prefix\": \"/\"\n      },\n      \"responses\": [\n        {\n          \"status\": 200,\n          \"resolution\": 1000,\n          \"distribution\": {\n            \"p0.0\": \"30ms\",\n            \"p100.0\": \"500ms\"\n          }\n        },\n        {\n          \"status\": 503,\n          \"resolution\": 10,\n          \"distribution\": {\n            \"p0.0\": \"3ms\",\n            \"p100.0\": \"5ms\"\n          }\n        }\n      ]\n    }\n  ]\n}\nEND\n)\nboe run \\\n    --extension dynamic-fault-injection \\\n    --log-level dynamic_modules:debug \\\n    --config \"${CONFIG}\"\n\n❯ curl -v http://localhost:10000/status/200\n\u003e GET /status/200 HTTP/1.1\n\u003e Host: localhost:10000\n\u003e User-Agent: curl/8.7.1\n\u003e Accept: */*\n\u003e\n\u003c HTTP/1.1 200 OK\n\u003c date: Fri, 02 Oct 2026 19:11:25 GMT\n\u003c content-type: text/html; charset=utf-8\n\u003c content-length: 0\n\u003c server: envoy\n\u003c access-control-allow-origin: *\n\u003c access-control-allow-credentials: true\n\u003c x-envoy-upstream-service-time: 113\n\u003c x-fault-injected-delay: 326.1ms\n\u003c x-fault-actual-upstream: 114.130167ms\n\u003c x-fault-added-delay: 211.969833ms\n\u003c x-fault-status: 200\n\u003c x-fault-upstream-status: 200\n\u003c x-fault-requests-in-flight: 0\n\n# About 1% of requests sample the 503 response instead and get a local reply\n❯ curl -v http://localhost:10000/status/200\n\u003e GET /status/200 HTTP/1.1\n\u003e Host: localhost:10000\n\u003e User-Agent: curl/8.7.1\n\u003e Accept: */*\n\u003e\n\u003c HTTP/1.1 503 Service Unavailable\n\u003c content-type: text/plain\n\u003c x-fault-injected: abort\n\u003c x-fault-injected-delay: 4ms\n\u003c x-fault-actual-upstream: 182.419083ms\n\u003c x-fault-status: 503\n\u003c x-fault-upstream-status: 200\n\u003c x-fault-requests-in-flight: 0\n\u003c content-length: 24\n\u003c date: Fri, 02 Oct 2026 19:12:39 GMT\n\u003c server: envoy\n"
+      }
+    ],
+    "minEnvoyVersion": "1.38.0",
+    "maxEnvoyVersion": "1.39.0",
+    "composerVersion": "0.13.0-dev",
+    "sourcePath": "composer/dynamic-fault-injection",
+    "configReferencePath": "/docs/reference/extensions#dynamic-fault-injection"
   },
   {
     "name": "example-ext-proc",
@@ -434,7 +471,7 @@
   },
   {
     "name": "example-go",
-    "version": "0.10.0-dev",
+    "version": "0.13.0-dev",
     "parent": "composer",
     "categories": [
       "Examples"
@@ -456,12 +493,12 @@
       {
         "title": "Basic Example",
         "description": "Load the example go plugin as an HTTP filter",
-        "code": "boe run --extension example\n"
+        "code": "boe run --extension example-go\n"
       }
     ],
     "minEnvoyVersion": "1.38.0",
     "maxEnvoyVersion": "1.39.0",
-    "composerVersion": "0.10.0-dev",
+    "composerVersion": "0.13.0-dev",
     "sourcePath": "composer/example"
   },
   {
@@ -542,7 +579,7 @@
   },
   {
     "name": "file-server",
-    "version": "0.10.0-dev",
+    "version": "0.13.0-dev",
     "parent": "composer",
     "categories": [
       "Traffic Control"
@@ -576,20 +613,20 @@
     ],
     "minEnvoyVersion": "1.38.0",
     "maxEnvoyVersion": "1.39.0",
-    "composerVersion": "0.10.0-dev",
+    "composerVersion": "0.13.0-dev",
     "sourcePath": "composer/file-server",
     "configReferencePath": "/docs/reference/extensions#file-server"
   },
   {
     "name": "goplugin-loader",
-    "version": "0.10.0-dev",
+    "version": "0.13.0-dev",
     "parent": "composer",
     "categories": [
       "Misc"
     ],
     "author": "Tetrate",
     "description": "Built-in loader that hosts standalone Go plugins at runtime; always compiled into composer",
-    "longDescription": "The Go Plugin Loader is a built-in Envoy dynamic module filter that loads standalone\nGo plugins (`.so` files built with `-buildmode=plugin`) at runtime, without recompiling\nthe host binary. It is registered as the well-known HTTP filter config factory named\n`goplugin-loader`.\n\n## Always built-in\n\nThe loader is **always** compiled into the Composer (`libcomposer.so`) and Composer Lite\n(`libcomposer-lite.so`) dynamic modules. It is **not** a standalone, independently\ninstallable or releasable Go plugin: because it is the component that loads other Go\nplugins, it can never itself be compiled as an independent Go plugin.\n\nUsers reference it directly via `--extension goplugin-loader` or\n`--extension composer/goplugin-loader`, which drives the loader to fetch and load the\nconfigured plugin at runtime.\n\n## Configuration\n\nThe loader is configured with the `GoPlugin` message:\n\n- `name`: the plugin name to load\n- `url`: where to fetch the plugin binary (`file://` for local paths, `oci://` for OCI registries)\n- `config`: optional plugin-specific configuration passed through to the loaded plugin\n- `strict_check`: whether to enforce strict host/plugin compatibility checks (defaults to `true`)\n\n## Runtime environment variables\n\n- `GOPLUGIN_CACHE_DIR` — directory to cache downloaded plugin binaries\n- `GOPLUGIN_PULL_SECRET` — credentials for authenticating to the OCI registry\n- `GOPLUGIN_INSECURE` — set to `true` to allow insecure (HTTP) registry connections\n",
+    "longDescription": "The Go Plugin Loader is a built-in Envoy dynamic module filter that loads standalone\nGo plugins (`.so` files built with `-buildmode=plugin`) at runtime, without recompiling\nthe host binary. It is registered as the well-known HTTP filter config factory named\n`goplugin-loader`.\n\n## Always built-in\n\nThe loader is **always** compiled into the Composer (`libcomposer.so`) and Composer Lite\n(`libcomposer-lite.so`) dynamic modules. It is **not** a standalone, independently\ninstallable or releasable Go plugin: because it is the component that loads other Go\nplugins, it can never itself be compiled as an independent Go plugin.\n\nUsers reference it directly via `--extension goplugin-loader` or\n`--extension composer/goplugin-loader`, which drives the loader to fetch and load the\nconfigured plugin at runtime.\n\n## Configuration\n\nThe loader is configured with the `GoPlugin` message:\n\n- `name`: the plugin name to load\n- `url`: where to fetch the plugin binary (`file://` for local paths, `oci://` for OCI registries)\n- `config`: optional plugin-specific configuration passed through to the loaded plugin\n- `strict_check`: whether to enforce strict host/plugin compatibility checks (defaults to `true`)\n- `versioned_url_suffix`: whether to append the composer version to the tag of the `oci://` URL\n  before fetching the plugin image, so that a single configuration keeps selecting the plugin\n  build that matches the composer shipped with the proxy (defaults to `false`)\n\n## Runtime environment variables\n\n- `GOPLUGIN_CACHE_DIR` — directory to cache downloaded plugin binaries\n- `GOPLUGIN_PULL_SECRET` — credentials for authenticating to the OCI registry\n- `GOPLUGIN_INSECURE` — set to `true` to allow insecure (HTTP) registry connections\n",
     "type": "go",
     "filterType": [
       "http"
@@ -612,7 +649,7 @@
     ],
     "minEnvoyVersion": "1.38.0",
     "maxEnvoyVersion": "1.39.0",
-    "composerVersion": "0.10.0-dev",
+    "composerVersion": "0.13.0-dev",
     "sourcePath": "composer/goplugin-loader",
     "configReferencePath": "/docs/reference/extensions#goplugin-loader"
   },
@@ -668,7 +705,7 @@
   },
   {
     "name": "jwe-decrypt",
-    "version": "0.10.0-dev",
+    "version": "0.13.0-dev",
     "parent": "composer",
     "categories": [
       "Authentication"
@@ -724,13 +761,13 @@
     ],
     "minEnvoyVersion": "1.38.0",
     "maxEnvoyVersion": "1.39.0",
-    "composerVersion": "0.10.0-dev",
+    "composerVersion": "0.13.0-dev",
     "sourcePath": "composer/jwe-decrypt",
     "configReferencePath": "/docs/reference/extensions#jwe-decrypt"
   },
   {
     "name": "llm-proxy",
-    "version": "0.10.0-dev",
+    "version": "0.13.0-dev",
     "parent": "composer",
     "categories": [
       "AI"
@@ -778,7 +815,7 @@
     ],
     "minEnvoyVersion": "1.38.0",
     "maxEnvoyVersion": "1.39.0",
-    "composerVersion": "0.10.0-dev",
+    "composerVersion": "0.13.0-dev",
     "sourcePath": "composer/llm-proxy",
     "configReferencePath": "/docs/reference/extensions#llm-proxy"
   },
@@ -830,7 +867,7 @@
   },
   {
     "name": "opa",
-    "version": "0.10.0-dev",
+    "version": "0.13.0-dev",
     "parent": "composer",
     "categories": [
       "Security"
@@ -904,13 +941,13 @@
     ],
     "minEnvoyVersion": "1.38.0",
     "maxEnvoyVersion": "1.39.0",
-    "composerVersion": "0.10.0-dev",
+    "composerVersion": "0.13.0-dev",
     "sourcePath": "composer/opa",
     "configReferencePath": "/docs/reference/extensions#opa"
   },
   {
     "name": "openapi-validator",
-    "version": "0.10.0-dev",
+    "version": "0.13.0-dev",
     "parent": "composer",
     "categories": [
       "Traffic Control"
@@ -957,13 +994,13 @@
     ],
     "minEnvoyVersion": "1.38.0",
     "maxEnvoyVersion": "1.39.0",
-    "composerVersion": "0.10.0-dev",
+    "composerVersion": "0.13.0-dev",
     "sourcePath": "composer/openapi-validator",
     "configReferencePath": "/docs/reference/extensions#openapi-validator"
   },
   {
     "name": "openfga",
-    "version": "0.10.0-dev",
+    "version": "0.13.0-dev",
     "parent": "composer",
     "categories": [
       "AI",
@@ -1030,7 +1067,7 @@
     ],
     "minEnvoyVersion": "1.38.0",
     "maxEnvoyVersion": "1.39.0",
-    "composerVersion": "0.10.0-dev",
+    "composerVersion": "0.13.0-dev",
     "sourcePath": "composer/openfga",
     "configReferencePath": "/docs/reference/extensions#openfga"
   },
@@ -1082,7 +1119,7 @@
   },
   {
     "name": "saml",
-    "version": "0.10.0-dev",
+    "version": "0.13.0-dev",
     "parent": "composer",
     "categories": [
       "Authentication",
@@ -1135,13 +1172,13 @@
     ],
     "minEnvoyVersion": "1.38.0",
     "maxEnvoyVersion": "1.39.0",
-    "composerVersion": "0.10.0-dev",
+    "composerVersion": "0.13.0-dev",
     "sourcePath": "composer/saml",
     "configReferencePath": "/docs/reference/extensions#saml"
   },
   {
     "name": "token-exchange",
-    "version": "0.10.0-dev",
+    "version": "0.13.0-dev",
     "parent": "composer",
     "categories": [
       "Authentication",
@@ -1173,7 +1210,7 @@
     ],
     "minEnvoyVersion": "1.38.0",
     "maxEnvoyVersion": "1.39.0",
-    "composerVersion": "0.10.0-dev",
+    "composerVersion": "0.13.0-dev",
     "sourcePath": "composer/token-exchange",
     "configReferencePath": "/docs/reference/extensions#token-exchange"
   }

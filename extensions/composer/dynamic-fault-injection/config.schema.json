@@ -1,0 +1,437 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "dynamic-fault-injection/config.schema.json",
+  "title": "Dynamic Fault Injection Configuration",
+  "description": "Configuration for the dynamic fault injection filter. Filter-level configuration may define endpoint selectors; per-route configuration defines direct response distributions or load-based behavior.",
+  "type": "object",
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "required": [
+        "endpoints"
+      ]
+    },
+    {
+      "required": [
+        "responses"
+      ]
+    },
+    {
+      "required": [
+        "load_based"
+      ]
+    }
+  ],
+  "properties": {
+    "probability_distribution": {
+      "type": "string",
+      "description": "Selects latency sampling mode for response distributions. Status selection remains weighted-random in both modes.",
+      "enum": [
+        "stateful",
+        "stateless"
+      ],
+      "default": "stateful"
+    },
+    "diagnostic": {
+      "type": "boolean",
+      "description": "Includes the Envoy worker index diagnostic response header.",
+      "default": false
+    },
+    "endpoints": {
+      "type": "array",
+      "description": "List of endpoint configurations, each defining fault behavior for matched routes.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "match": {
+            "type": "object",
+            "description": "Optional route matching configuration. Omit or leave empty to match all requests.",
+            "additionalProperties": false,
+            "properties": {
+              "prefix": {
+                "type": "string",
+                "description": "Path prefix to match."
+              },
+              "exact": {
+                "type": "string",
+                "description": "Exact path to match (query string is stripped before matching)."
+              },
+              "headers": {
+                "type": "array",
+                "description": "Header matching conditions (all must match).",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "Header name to match."
+                    },
+                    "exact_match": {
+                      "type": "string",
+                      "description": "Exact header value to match."
+                    },
+                    "present_match": {
+                      "type": "boolean",
+                      "description": "If true, only checks that the header is present."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "type": "array",
+            "description": "Response distributions. Resolution acts as both relative weight and sample count.",
+            "items": {
+              "$ref": "#/$defs/statusDistribution"
+            },
+            "minItems": 1
+          },
+          "load_based": {
+            "type": "object",
+            "description": "Load-based response distribution that switches behavior based on the process-global count of matched requests currently in flight.",
+            "additionalProperties": false,
+            "required": [
+              "healthy",
+              "tipping_point"
+            ],
+            "properties": {
+              "healthy": {
+                "type": "object",
+                "description": "Response behavior when the in-flight request count is at or below the healthy threshold.",
+                "additionalProperties": false,
+                "required": [
+                  "threshold_in_flight",
+                  "responses"
+                ],
+                "properties": {
+                  "threshold_in_flight": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "In-flight request count threshold at or below which healthy behavior applies."
+                  },
+                  "responses": {
+                    "$ref": "#/$defs/statusDistributions"
+                  }
+                }
+              },
+              "tipping_point": {
+                "type": "object",
+                "description": "Response behavior when the in-flight request count is at or above the tipping point threshold.",
+                "additionalProperties": false,
+                "required": [
+                  "threshold_in_flight",
+                  "responses"
+                ],
+                "properties": {
+                  "threshold_in_flight": {
+                    "type": "number",
+                    "description": "In-flight request count threshold at or above which tipping point behavior applies. Must be greater than the healthy threshold."
+                  },
+                  "responses": {
+                    "$ref": "#/$defs/statusDistributions"
+                  }
+                }
+              },
+              "grey_zone": {
+                "type": "object",
+                "description": "Controls behavior in the transition zone between healthy and tipping point.",
+                "additionalProperties": false,
+                "properties": {
+                  "penalty_base": {
+                    "type": "string",
+                    "description": "Base penalty duration in the grey zone (e.g., \"10ms\")."
+                  },
+                  "spike_threshold": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "exclusiveMaximum": 1,
+                    "description": "Grey zone position threshold that triggers spike behavior."
+                  },
+                  "spike_penalty_duration": {
+                    "type": "string",
+                    "description": "Recovery window after load drops below the spike threshold (e.g., \"5s\")."
+                  },
+                  "spike_penalty_multiplier": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "Multiplier applied to penalty during a spike."
+                  },
+                  "recovery_rate": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1,
+                    "description": "Rate at which penalty decays after a spike (0-1]."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "responses"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "load_based"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "load_based"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "responses"
+                ]
+              }
+            }
+          }
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "responses"
+            ]
+          },
+          {
+            "required": [
+              "load_based"
+            ]
+          }
+        ]
+      }
+    },
+    "responses": {
+      "type": "array",
+      "description": "Direct response distributions for per-route configuration.",
+      "items": {
+        "$ref": "#/$defs/statusDistribution"
+      },
+      "minItems": 1
+    },
+    "load_based": {
+      "description": "Direct load-based behavior for per-route configuration.",
+      "$ref": "#/properties/endpoints/items/properties/load_based"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "responses"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "load_based"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "load_based"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "responses"
+          ]
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "localResponseHeader": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "value"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[!#$%&'*+\\-.^_`|~0-9A-Za-z]+$",
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "^[cC][oO][nN][tT][eE][nN][tT]-[lL][eE][nN][gG][tT][hH]$"
+              },
+              {
+                "pattern": "^[tT][rR][aA][nN][sS][fF][eE][rR]-[eE][nN][cC][oO][dD][iI][nN][gG]$"
+              },
+              {
+                "pattern": "^[cC][oO][nN][nN][eE][cC][tT][iI][oO][nN]$"
+              },
+              {
+                "pattern": "^[kK][eE][eE][pP]-[aA][lL][iI][vV][eE]$"
+              },
+              {
+                "pattern": "^[pP][rR][oO][xX][yY]-[cC][oO][nN][nN][eE][cC][tT][iI][oO][nN]$"
+              },
+              {
+                "pattern": "^[uU][pP][gG][rR][aA][dD][eE]$"
+              },
+              {
+                "pattern": "^[tT][rR][aA][iI][lL][eE][rR]$"
+              },
+              {
+                "pattern": "^[tT][eE]$"
+              },
+              {
+                "pattern": "^[xX]-[fF][aA][uU][lL][tT]-"
+              }
+            ]
+          },
+          "description": "HTTP header field name."
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[^\\x00-\\x08\\x0A-\\x1F\\x7F]*$",
+          "description": "HTTP header field value; control characters are rejected."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "pattern": "^[cC][oO][nN][tT][eE][nN][tT]-[tT][yY][pP][eE]$"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "pattern": "[^\t-\r    -     　]"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "localResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Customizes a forced response. Omitted bodies are empty for sampled statuses below 400 and preserve generated fault text for statuses 400 and above. Statuses 204, 205, and 304 reject nonempty bodies. Envoy may remove Content-Type for empty bodies and bodyless statuses.",
+      "properties": {
+        "body": {
+          "type": "string",
+          "description": "Response body encoded as UTF-8."
+        },
+        "headers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/localResponseHeader"
+          },
+          "description": "Header pairs added to the local response. Repeated names are retained; Envoy supplies Content-Length.",
+          "contains": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "pattern": "^[cC][oO][nN][tT][eE][nN][tT]-[tT][yY][pP][eE]$"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "minContains": 0,
+          "maxContains": 1
+        }
+      }
+    },
+    "statusDistribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "resolution",
+        "distribution"
+      ],
+      "properties": {
+        "status": {
+          "type": "integer",
+          "minimum": 200,
+          "maximum": 599,
+          "description": "Terminal HTTP status code for this response class (200-599)."
+        },
+        "resolution": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Relative weight and number of pre-computed samples."
+        },
+        "distribution": {
+          "type": "object",
+          "description": "Percentile-to-duration mapping (e.g., \"p50.0\": \"10ms\").",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h)$"
+          }
+        },
+        "local_response": {
+          "$ref": "#/$defs/localResponse"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  204,
+                  205,
+                  304
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "local_response": {
+                "properties": {
+                  "body": {
+                    "maxLength": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "statusDistributions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/statusDistribution"
+      }
+    }
+  }
+}
