@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/corazawaf/coraza/v3"
 	ctypes "github.com/corazawaf/coraza/v3/types"
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 
@@ -29,13 +28,13 @@ const (
 
 type wafPluginFactory struct {
 	shared.EmptyHttpFilterFactory
-	config  coraza.WAF
+	config  *waf.SharedWAF
 	mode    waf.WAFMode
 	metrics *metrics
 }
 
 type perRouteWafPluginConfig struct {
-	config coraza.WAF
+	config *waf.SharedWAF
 	mode   waf.WAFMode
 }
 
@@ -73,16 +72,15 @@ func (f *wafPluginConfigFactory) Create(
 	handle shared.HttpFilterConfigHandle,
 	unparsedConfig []byte,
 ) (shared.HttpFilterFactory, error) {
-	var wafConfig coraza.WAF
+	var wafConfig *waf.SharedWAF
 	var mode waf.WAFMode
-	var err error
 
 	if len(unparsedConfig) > 0 {
-		wafConfig, mode, err = waf.NewWAFConfigFromBytes(unparsedConfig, logger.GetLogger())
-	}
-
-	if err != nil {
-		return nil, err
+		var err error
+		wafConfig, mode, err = newSharedWAFConfig(unparsedConfig)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if wafConfig == nil {
@@ -97,7 +95,7 @@ func (f *wafPluginConfigFactory) Create(
 }
 
 func (f *wafPluginConfigFactory) CreatePerRoute(unparsedConfig []byte) (any, error) {
-	wafConfig, mode, err := waf.NewWAFConfigFromBytes(unparsedConfig, logger.GetLogger())
+	wafConfig, mode, err := newSharedWAFConfig(unparsedConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -107,18 +105,33 @@ func (f *wafPluginConfigFactory) CreatePerRoute(unparsedConfig []byte) (any, err
 	}, nil
 }
 
+// newSharedWAFConfig parses a filter config and returns its shared WAF and mode.
+func newSharedWAFConfig(unparsedConfig []byte) (*waf.SharedWAF, waf.WAFMode, error) {
+	l := logger.GetLogger()
+	config, err := waf.ParseConfig(unparsedConfig, l)
+	if err != nil {
+		return nil, 0, err
+	}
+	sharedWAF, err := waf.GetOrCreateSharedWAF(config.Directives, l)
+	if err != nil {
+		return nil, 0, err
+	}
+	return sharedWAF, config.Mode, nil
+}
+
 // The plugin struct that implements the actual logic.
 type wafPlugin struct {
 	shared.EmptyHttpFilter
 	logger            *logger.Logger
 	handle            shared.HttpFilterHandle
-	config            coraza.WAF
+	config            *waf.SharedWAF
 	mode              waf.WAFMode
 	metrics           *metrics
 	metadataNamespace string
 
 	txContext             ctypes.Transaction
-	txStart               time.Time
+	wafElapsed            time.Duration // summed time spent in the waf callbacks (WAF-added latency)
+	txDone                bool          // WAF analysis complete and metrics emitted: set by recordTxMetrics, exactly once
 	protocol              string
 	isUpgrade             bool
 	isSSE                 bool
@@ -169,7 +182,6 @@ func (p *wafPlugin) initializeTransaction(headers shared.HeaderMap) {
 	}
 	id := headers.GetOne("x-request-id").ToString()
 	p.txContext = p.config.NewTransactionWithID(id)
-	p.txStart = time.Now()
 	p.isUpgrade = p.checkUpgrade(headers)
 }
 
@@ -186,6 +198,7 @@ func (p *wafPlugin) checkSSE(headers shared.HeaderMap) bool {
 }
 
 func (p *wafPlugin) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) shared.HeadersStatus {
+	defer p.trackAndMarkTxDone(time.Now())
 	// Save for later use in response processing.
 	host := headers.GetOne(":authority").ToString()
 	p.protocol = p.getRequestProtocol()
@@ -242,6 +255,7 @@ func (p *wafPlugin) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool)
 }
 
 func (p *wafPlugin) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shared.BodyStatus {
+	defer p.trackAndMarkTxDone(time.Now())
 	if p.txContext == nil {
 		p.handle.Log(shared.LogLevelDebug,
 			"Request body phase reached without a previously initialized context. Passing through")
@@ -294,6 +308,7 @@ func (p *wafPlugin) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shar
 }
 
 func (p *wafPlugin) OnRequestTrailers(_ shared.HeaderMap) shared.TrailersStatus {
+	defer p.trackAndMarkTxDone(time.Now())
 	if p.txContext == nil {
 		p.handle.Log(shared.LogLevelDebug,
 			"Request trailers phase reached without a previously initialized context. Passing through")
@@ -313,6 +328,7 @@ func (p *wafPlugin) OnRequestTrailers(_ shared.HeaderMap) shared.TrailersStatus 
 }
 
 func (p *wafPlugin) OnResponseHeaders(headers shared.HeaderMap, endOfStream bool) shared.HeadersStatus {
+	defer p.trackAndMarkTxDone(time.Now())
 	// Nil check is performed because the transaction is created only in OnRequestHeaders.
 	// A nil txContext here means the request/decode path never ran. It happens when Envoy
 	// produces the response without the request traversing this filter (e.g. a downstream
@@ -368,6 +384,7 @@ func (p *wafPlugin) OnResponseHeaders(headers shared.HeaderMap, endOfStream bool
 }
 
 func (p *wafPlugin) OnResponseBody(body shared.BodyBuffer, endOfStream bool) shared.BodyStatus {
+	defer p.trackAndMarkTxDone(time.Now())
 	// txContext is nil when the request phase never ran (see OnResponseHeaders).
 	if p.txContext == nil {
 		p.handle.Log(shared.LogLevelDebug,
@@ -420,6 +437,7 @@ func (p *wafPlugin) OnResponseBody(body shared.BodyBuffer, endOfStream bool) sha
 }
 
 func (p *wafPlugin) OnResponseTrailers(_ shared.HeaderMap) shared.TrailersStatus {
+	defer p.trackAndMarkTxDone(time.Now())
 	// txContext is nil when the request phase never ran (see OnResponseHeaders).
 	if p.txContext == nil {
 		p.handle.Log(shared.LogLevelDebug,
@@ -440,15 +458,66 @@ func (p *wafPlugin) OnResponseTrailers(_ shared.HeaderMap) shared.TrailersStatus
 }
 
 func (p *wafPlugin) OnStreamComplete() {
-	if p.txContext != nil {
-		if !p.txContext.IsRuleEngineOff() {
-			p.metrics.RecordTx(p.handle, p.txStart)
-		}
-		p.txContext.ProcessLogging()
-		err := p.txContext.Close()
-		if err != nil {
-			p.handle.Log(shared.LogLevelDebug, "Failed to close WAF transaction: %v", err.Error())
-		}
+	if p.txContext == nil {
+		p.handle.Log(shared.LogLevelDebug,
+			"On Stream complete reached without a previously initialized context. Passing through")
+		return
+	}
+	// Cover any path where the transaction was not marked done at a callback
+	// boundary (internal-error blocks, aborted/reset connections): emit the
+	// metrics now.
+	if !p.txDone {
+		p.recordTxMetrics()
+	}
+	// ProcessLogging (phase 5 + audit logging) is expected to be run outside the data path
+	// in order to do not delay the response.
+	p.txContext.ProcessLogging()
+	if err := p.txContext.Close(); err != nil {
+		p.handle.Log(shared.LogLevelDebug, "Failed to close WAF transaction: %v", err.Error())
+	}
+	p.txContext = nil
+}
+
+// trackAndMarkTxDone is deferred at the top of every filter callback.
+// It accumulates the time spent in each callback (the full overhead introduced
+// by the WAF) and, as soon as the WAF analysis is done, marks the transaction
+// done, emitting its metrics. The transaction stays live: audit logging
+// (phase 5) and closing are deferred to OnStreamComplete, outside the data path.
+//
+// The WAF analysis is done when:
+//   - the WAF raised an interruption in any phase
+//   - the rule engine is off: every waf callback early-returns on IsRuleEngineOff
+//   - phase 4 has run in full mode
+//   - phase 2 has run in request-only mode
+//
+// Internal-error blocks matching none of these conditions (e.g. a body write
+// failure) end the stream right away: their metrics are emitted by the
+// OnStreamComplete fallback.
+func (p *wafPlugin) trackAndMarkTxDone(start time.Time) {
+	if p.txContext == nil {
+		return
+	}
+	if p.txDone {
+		// The WAF analysis is already done and metrics have been emitted.
+		return
+	}
+	p.wafElapsed += time.Since(start)
+	// The following are all scenarios where no further analysis will run:
+	if p.txContext.IsInterrupted() || // the WAF raised an interruption
+		p.txContext.IsRuleEngineOff() || // rule engine is off
+		p.responseBodyProcessed || // phase 4 has run
+		(p.mode == waf.ModeRequestOnly && p.requestBodyProcessed) { // phase 2 has run in request-only mode
+		p.recordTxMetrics()
+	}
+}
+
+// recordTxMetrics marks the WAF analysis as done and emits the per-transaction
+// metrics as soon as the analysis completes rather than at stream end,
+// which for long-lived streams can be far later.
+func (p *wafPlugin) recordTxMetrics() {
+	p.txDone = true
+	if !p.txContext.IsRuleEngineOff() {
+		p.metrics.RecordTx(p.handle, p.wafElapsed)
 	}
 }
 

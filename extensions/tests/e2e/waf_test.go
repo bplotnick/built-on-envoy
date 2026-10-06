@@ -48,6 +48,8 @@ func TestWAFSmoke(t *testing.T) {
 
 	internaltesting.RunEnvoy(t, cliBin, proxyPort, adminPort,
 		"--log-level", "dynamic_modules:debug",
+		// Include '%N' in the log format to see the exact Envoy SHA used in the e2e tests.
+		"--log-format", "[%Y-%m-%d %T.%e][%t][%l][%n] [%N][%g:%#] %v",
 		"--local", "../../composer/waf",
 		"--config", config)
 
@@ -126,6 +128,8 @@ func TestFTW(t *testing.T) {
 
 	internaltesting.RunEnvoy(t, cliBin, ftwPort, ports[0],
 		"--log-level", "dynamic_modules:debug",
+		// Include '%N' in the log format to see the exact Envoy SHA used in the e2e tests.
+		"--log-format", "[%Y-%m-%d %T.%e][%t][%l][%n] [%N][%g:%#] %v",
 		"--local", "../../composer/waf",
 		"--config", config)
 
@@ -152,7 +156,7 @@ func TestFTW(t *testing.T) {
 		cmdArgs = append(cmdArgs, "-i", include)
 	}
 
-	// #nosec G204
+	// #nosec G204 G702 -- fixed "go" binary with args built from this test's own env vars
 	cmd := exec.Command("go", cmdArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

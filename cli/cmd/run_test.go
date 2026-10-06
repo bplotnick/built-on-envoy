@@ -55,6 +55,7 @@ Flags:
       --envoy-path=STRING          Path to a custom Envoy binary. Skips Envoy
                                    download and version selection ($ENVOY_PATH).
       --log-level="all:error"      Envoy component log level ($ENVOY_LOG_LEVEL).
+      --log-format=STRING          Envoy log format ($ENVOY_LOG_FORMAT).
       --run-id=STRING              Run identifier for this invocation. Overrides
                                    the default timestamp-based ID ($BOE_RUN_ID).
       --listen-port=10000          Port for Envoy listener to accept incoming
@@ -717,18 +718,29 @@ func TestValidateEnvoyCompat(t *testing.T) {
 	}
 }
 
-func TestRunIncompatibleEnvoyVersion(t *testing.T) {
+func TestRunWarnsOnIncompatibleEnvoyVersion(t *testing.T) {
+	// An Envoy version incompatible with an extension's constraints no longer aborts the run;
+	// it only logs a warning and proceeds. (testdata/input_lua_inline declares maxEnvoyVersion
+	// 1.35.0, so 1.38.0 is incompatible.) Verify the warning is emitted and the incompatibility
+	// is not surfaced as a fatal error. RunID "///" forces a clean failure in the runner so the
+	// test stops before actually launching Envoy.
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
 	r := &Run{
 		Envoy: EnvoyFlags{Version: "1.38.0"},
 		Local: []string{"./testdata/input_lua_inline"},
+		RunID: "///",
 	}
 
 	var err error
 	r.extensionPositions, err = saveExtensionPositions([]string{"--local", "./testdata/input_lua_inline"})
 	require.NoError(t, err)
 
-	err = r.Run(t.Context(), nil, internaltesting.NewTLogger(t))
-	require.ErrorIs(t, err, errIncompatibleEnvoyVersion)
+	err = r.Run(t.Context(), &xdg.Directories{}, logger)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, errIncompatibleEnvoyVersion)
+	require.Contains(t, buf.String(), "some extensions may not be compatible with the specified Envoy version")
 }
 
 func TestRunMultipleConfigArgsWithCommas(t *testing.T) {
@@ -965,10 +977,12 @@ func TestDownloadExtensions(t *testing.T) {
 
 		composerManifest, err := os.ReadFile("testdata/composer_test.yaml")
 		require.NoError(t, err)
+		// #nosec G703 -- composerDir is rooted at t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(composerDir, "manifest.yaml"), composerManifest, 0o600))
 
 		childManifest, err := os.ReadFile("testdata/composer_child.yaml")
 		require.NoError(t, err)
+		// #nosec G703 -- childDir is rooted at t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(childDir, "manifest.yaml"), childManifest, 0o600))
 
 		mock := &mockOCIClient{
