@@ -11,7 +11,8 @@ import (
 	"log"
 	"strings"
 
-	coreruleset "github.com/corazawaf/coraza-coreruleset/v4"
+	corazaconf "github.com/corazawaf/coraza-coreruleset/coraza/v3"
+	crs "github.com/corazawaf/coraza-coreruleset/crs/v4"
 	"github.com/jcchavezs/mergefs"
 	"github.com/jcchavezs/mergefs/io"
 )
@@ -22,10 +23,11 @@ var customConfigsEmbed embed.FS
 // embeddedConfigs is the embedded directives directory wrapped with alias resolution.
 var embeddedConfigs directivesFS
 
-// combinedDirectivesFS merges three filesystems with the following precedence order:
+// combinedDirectivesFS merges four filesystems with the following precedence order:
 //  1. Embedded directives — tailored configurations shipped with this extension
-//  2. coraza-coreruleset package — upstream unmodified OWASP CRS directives and configs
-//  3. Local filesystem — support for user-provided directive files
+//  2. coraza-coreruleset crs/v4 module — upstream unmodified OWASP CRS rules and setup file
+//  3. coraza-coreruleset coraza/v3 module — upstream unmodified Coraza recommended config
+//  4. Local filesystem — support for user-provided directive files
 var combinedDirectivesFS fs.FS
 
 func init() {
@@ -36,7 +38,7 @@ func init() {
 		log.Fatal(err)
 	}
 	embeddedConfigs = directivesFS{sub}
-	combinedDirectivesFS = mergefs.Merge(embeddedConfigs, coreruleset.FS, io.OSFS)
+	combinedDirectivesFS = mergefs.Merge(embeddedConfigs, crs.FS, corazaconf.FS, io.OSFS)
 }
 
 // directivesFS wraps the embedded directives directory, strips directory prefixes
@@ -67,13 +69,17 @@ func (d directivesFS) Glob(pattern string) ([]string, error) {
 	return fs.Glob(d.subFS, normalized)
 }
 
-// normalizeDirectivePath strips any directory prefix before '@' (Coraza prepends
-// the including file's directory when resolving nested Include directives) and
-// resolves aliases to their canonical embedded file names.
+// normalizeDirectivePath strips the directory prefix that Coraza prepends when
+// resolving nested Include directives (it joins the including file's directory
+// with the included path) and resolves aliases to their canonical embedded file
+// names.
+// The cut is anchored to the last path segment starting with '@' ("/@") rather
+// than to the first '@', as the including file's directory may itself contain
+// an '@' (e.g. "/etc/waf@prod/" or a Go module cache path "repo@v1.2.3/").
 // Aliases usage is discouraged, but kept for backward compatibility.
 func normalizeDirectivePath(name string) string {
-	if idx := strings.Index(name, "@"); idx != -1 {
-		name = name[idx:]
+	if idx := strings.LastIndex(name, "/@"); idx != -1 {
+		name = name[idx+1:]
 	}
 	switch name {
 	case "@recommended.conf", "@recommended-conf":

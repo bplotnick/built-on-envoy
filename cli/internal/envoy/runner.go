@@ -85,8 +85,14 @@ type RunnerFuncE struct {
 	// TestUpstreamCluster specifies the name of an existing configured cluster to use as the test upstream.
 	// Mutually exclusive with TestUpstreamHost.
 	TestUpstreamCluster string
+	// ListenerTLSCert is the path to the certificate chain used to terminate TLS on the listener.
+	ListenerTLSCert string
+	// ListenerTLSKey is the path to the private key used to terminate TLS on the listener.
+	ListenerTLSKey string
 	// ExtProcBinaries maps ext_proc extension names to their binary paths.
 	ExtProcBinaries map[string]string
+	// Debug, when set, attaches a debug server to the Envoy process once it is started.
+	Debug *DebugOptions
 }
 
 // Run starts Envoy using func-e as a library.
@@ -106,6 +112,8 @@ func (r *RunnerFuncE) Run(ctx context.Context) error {
 		ClustersJSON:            r.ClustersJSON,
 		TestUpstreamHost:        r.TestUpstreamHost,
 		TestUpstreamCluster:     r.TestUpstreamCluster,
+		ListenerTLSCert:         r.ListenerTLSCert,
+		ListenerTLSKey:          r.ListenerTLSKey,
 	}
 	config, err := RenderConfig(params, FullConfigRenderer)
 	if err != nil {
@@ -125,7 +133,12 @@ func (r *RunnerFuncE) Run(ctx context.Context) error {
 	}
 
 	// Disable cgo pointer checks as Envoy may hold pointers to Go memory.
-	if err = os.Setenv("GODEBUG", "cgocheck=0"); err != nil {
+	godebug := []string{"cgocheck=0"}
+	if r.Debug != nil && r.Debug.Debugger == DebuggerDelve {
+		// Async preemption signals make stepping through Go code hosted in a cgo process unreliable.
+		godebug = append(godebug, "asyncpreemptoff=1")
+	}
+	if err = os.Setenv("GODEBUG", mergeGODEBUG(os.Getenv("GODEBUG"), godebug...)); err != nil {
 		return fmt.Errorf("failed to set GODEBUG: %w", err)
 	}
 
@@ -149,21 +162,41 @@ func (r *RunnerFuncE) Run(ctx context.Context) error {
 	}
 	defer stopExtProcServers(r.Logger, extProcCmds)
 
+	if r.Debug != nil {
+		// Resolve the debug server before starting Envoy to fail fast if it is not available.
+		if err = r.Debug.resolve(ctx, r.Logger); err != nil {
+			return err
+		}
+		defer r.Debug.stop(r.Logger)
+	}
+
 	// Define startup hook that will be called when Envoy admin is ready
+	proxyProtocol := "http"
+	if r.ListenerTLSCert != "" && r.ListenerTLSKey != "" {
+		proxyProtocol = "https"
+	}
 	start := time.Now()
-	startupHook := func(_ context.Context, adminClient admin.AdminClient, _ string) error {
+	startupHook := func(hookCtx context.Context, adminClient admin.AdminClient, _ string) error {
+		if r.Debug != nil {
+			if err := r.Debug.attach(ctx, hookCtx, r.Logger); err != nil {
+				return err
+			}
+		}
+
 		startDuration := time.Since(start).Round(100 * time.Millisecond)
-
 		_, _ = fmt.Fprintf(os.Stderr, `
-%[4]s✓ Envoy is ready after %[3]v%[5]s
-  → %[4]sProxy:%[5]s http://localhost:%[1]d
-  → %[4]sAdmin:%[5]s http://localhost:%[2]d
+%[1]s✓ Envoy is ready after %[5]v%[2]s
+  → %[1]sProxy:%[2]s %[6]s://localhost:%[3]d
+  → %[1]sAdmin:%[2]s http://localhost:%[4]d
 
-%[4]sTest with:%[5]s
-  curl http://localhost:%[1]d/
+%[1]sTest with:%[2]s
+  curl %[6]s://localhost:%[3]d/
 
 Press Ctrl+C to stop
-`, r.ListenPort, adminClient.Port(), startDuration, internal.ANSIBold, internal.ANSIReset)
+`, internal.ANSIBold, internal.ANSIReset, r.ListenPort, adminClient.Port(), startDuration, proxyProtocol)
+		if r.Debug != nil {
+			r.Debug.printNotes()
+		}
 		return nil
 	}
 
@@ -382,6 +415,10 @@ const (
 	containerRuntimeDir = containerVolumeDir + "/run"
 	// containerLocalExtensionsDir is the directory inside the container where local extensions are mounted.
 	containerLocalExtensionsDir = containerRuntimeDir + "/extensions"
+	// containerListenerTLSCert is the path inside the container where the listener certificate is mounted.
+	containerListenerTLSCert = containerRuntimeDir + "/tls/listener.crt"
+	// containerListenerTLSKey is the path inside the container where the listener private key is mounted.
+	containerListenerTLSKey = containerRuntimeDir + "/tls/listener.key"
 )
 
 // RunnerDocker handles running Envoy as a Docker container.
@@ -396,6 +433,13 @@ type RunnerDocker struct {
 	LocalExtensions []string
 	Pull            string
 	ImageVersion    string
+	// Debug, when set, runs the container so that a debug server can be attached to Envoy and reached
+	// from the host.
+	Debug *DebugOptions
+	// ListenerTLSCert is the host path to the listener certificate, mounted into the container.
+	ListenerTLSCert string
+	// ListenerTLSKey is the host path to the listener private key, mounted into the container.
+	ListenerTLSKey string
 }
 
 // Run starts Envoy in a Docker container.
@@ -406,9 +450,18 @@ func (r *RunnerDocker) Run(ctx context.Context) error {
 	)
 
 	// Process local extensions to mount them in the container and get the corresponding container paths.
-	localExtArgs, err := r.processLocalExtensions(r.LocalExtensions)
+	processLocal := r.processLocalExtensions
+	if r.Debug != nil {
+		processLocal = r.processLocalExtensionsDebug
+	}
+	localExtArgs, err := processLocal(r.LocalExtensions)
 	if err != nil {
 		return fmt.Errorf("failed to process local extensions: %w", err)
+	}
+	// Process the listener TLS files to mount them in the container.
+	listenerTLSArgs, err := r.processListenerTLS()
+	if err != nil {
+		return fmt.Errorf("failed to process listener TLS files: %w", err)
 	}
 
 	// Create a Docker volume for cache directories to enable caching across runs.
@@ -417,7 +470,7 @@ func (r *RunnerDocker) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to create Docker volume for cache: %w\nOutput: %s", err, string(output))
 	}
 
-	args := r.dockerRunArgs(image, localExtArgs)
+	args := r.dockerRunArgs(image, append(localExtArgs, listenerTLSArgs...))
 
 	fmt.Fprintf(os.Stderr, "→ %sRunning Envoy in Docker (%v)...%s\n", internal.ANSIBold, image, internal.ANSIReset)
 
@@ -453,11 +506,36 @@ func (r *RunnerDocker) dockerRunArgs(image string, localExtArgs []string) []stri
 		args = append(args, "-e", "BOE_RUN_ID="+r.RunID)
 	}
 
-	args = append(args, localExtArgs...)                  // local extension volumes
-	args = append(args, passthroughEnvVars()...)          // passthrough BOE_ env vars
-	args = append(args, image, "/boe")                    // container image and command
+	args = append(args, localExtArgs...)         // local extension and TLS volumes
+	args = append(args, passthroughEnvVars()...) // passthrough BOE_ env vars
+	if r.Debug != nil {
+		args = append(args, r.debugArgs()...)
+		// Run as root: the default entrypoint drops privileges to an unprivileged user that cannot
+		// ptrace the (sibling) Envoy process.
+		args = append(args, "--entrypoint", "/boe", image)
+	} else {
+		args = append(args, image, "/boe") // container image and command
+	}
 	args = append(args, r.processCommandArgs(os.Args)...) // command-line args
 
+	return args
+}
+
+// debugArgs returns the Docker run arguments needed to debug Envoy inside the container.
+func (r *RunnerDocker) debugArgs() []string {
+	port := strconv.FormatUint(uint64(r.Debug.Port), 10)
+	args := []string{
+		"--cap-add=SYS_PTRACE",
+		"--security-opt", "seccomp=unconfined",
+		"-p", "127.0.0.1:" + port + ":" + port,
+		"-e", DebugListenHostEnv + "=0.0.0.0",
+		// Source trees are mounted from the host and are not owned by the container user.
+		"-e", "GOFLAGS=-buildvcs=false",
+	}
+	// The notes are computed in the host, but printed by the boe process in the container.
+	if len(r.Debug.Notes) > 0 {
+		args = append(args, "-e", debugNotesEnv+"="+strings.Join(r.Debug.Notes, debugNotesSeparator))
+	}
 	return args
 }
 
@@ -479,13 +557,16 @@ func passthroughEnvVars() []string {
 	// Pass through BOE_ environment variables to the Docker container,
 	// so that users can set registry credentials or other configs via env vars instead of CLI flags.
 	// We don't passthrough the XDG variables as we'll mount the host directories on a fixed location in the container.
+	// BOE_RUN_DOCKER is not passed through either, as the CLI in the container must run Envoy directly
+	// instead of trying to start another Docker container.
 	passthroughEnv := slices.DeleteFunc(os.Environ(), func(arg string) bool {
 		return strings.HasPrefix(arg, "BOE_ADMIN_ADDRESS=") ||
 			strings.HasPrefix(arg, "BOE_CONFIG_HOME=") ||
 			strings.HasPrefix(arg, "BOE_DATA_HOME=") ||
 			strings.HasPrefix(arg, "BOE_STATE_HOME=") ||
 			strings.HasPrefix(arg, "BOE_RUNTIME_DIR=") ||
-			strings.HasPrefix(arg, "BOE_RUN_ID=")
+			strings.HasPrefix(arg, "BOE_RUN_ID=") ||
+			strings.HasPrefix(arg, "BOE_RUN_DOCKER=")
 	})
 
 	for _, e := range passthroughEnv {
@@ -512,6 +593,89 @@ func (r *RunnerDocker) processLocalExtensions(localExts []string) ([]string, err
 	r.Logger.Debug("processed local extensions for Docker", "volumes", args)
 
 	return args, nil
+}
+
+// processLocalExtensionsDebug mounts the root of each local extension (the extension itself, or its parent
+// bundle such as composer) at the same absolute path in the container. This allows resolving parent bundles
+// from the container and makes the source paths in the debug information match the ones in the host, so
+// breakpoints set in the IDE resolve without any path mapping.
+func (r *RunnerDocker) processLocalExtensionsDebug(localExts []string) ([]string, error) {
+	var (
+		args    []string
+		mounted = make(map[string]bool)
+	)
+	for _, ext := range localExts {
+		root, err := localExtensionRoot(ext)
+		if err != nil {
+			return nil, err
+		}
+		if mounted[root] {
+			continue
+		}
+		mounted[root] = true
+		args = append(args, "-v", root+":"+root)
+	}
+
+	r.Logger.Debug("processed local extensions for Docker debugging", "volumes", args)
+
+	return args, nil
+}
+
+// localExtensionRoot returns the absolute path of the root of the given local extension: the directory of its
+// parent bundle if it has one, or the extension directory itself otherwise.
+func localExtensionRoot(ext string) (string, error) {
+	absPath, err := filepath.Abs(ext)
+	if err != nil {
+		return "", fmt.Errorf("failed to get absolute path for local extension %q: %w", ext, err)
+	}
+	manifest, err := extensions.LoadLocalManifest(filepath.Join(absPath, "manifest.yaml"))
+	if err != nil {
+		return "", fmt.Errorf("failed to load manifest for local extension %q: %w", ext, err)
+	}
+	if manifest.Parent == "" {
+		return absPath, nil
+	}
+	_, parentDir, err := extensions.FindLocalParentManifest(manifest)
+	if err != nil {
+		return "", fmt.Errorf("failed to find parent manifest for local extension %q: %w", ext, err)
+	}
+	if parentDir == "" {
+		return "", fmt.Errorf("parent manifest %q not found locally for extension %q", manifest.Parent, ext)
+	}
+	return parentDir, nil
+}
+
+// processListenerTLS returns the Docker volume arguments to mount the listener TLS files in the container.
+func (r *RunnerDocker) processListenerTLS() ([]string, error) {
+	var args []string
+	for _, f := range []struct{ host, container string }{
+		{r.ListenerTLSCert, containerListenerTLSCert},
+		{r.ListenerTLSKey, containerListenerTLSKey},
+	} {
+		if f.host == "" {
+			continue
+		}
+		absPath, err := filepath.Abs(f.host)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get absolute path for %q: %w", f.host, err)
+		}
+		args = append(args, "-v", absPath+":"+f.container+":ro")
+	}
+	return args, nil
+}
+
+// listenerTLSContainerArg returns the flag name and the container path to use for the given listener TLS argument,
+// if the argument is one of the listener TLS flags.
+func listenerTLSContainerArg(arg string) (string, string, bool) {
+	flag, _, _ := strings.Cut(arg, "=")
+	switch flag {
+	case "--listener-cert":
+		return flag, containerListenerTLSCert, true
+	case "--listener-key":
+		return flag, containerListenerTLSKey, true
+	default:
+		return "", "", false
+	}
 }
 
 // localExtensionContainerPath returns the container path for a given local extension path.
@@ -552,6 +716,31 @@ func (r *RunnerDocker) processCommandArgs(args []string) []string {
 			continue
 		}
 
+		// In debug mode, local extensions are mounted at the same absolute path, and the debug server is
+		// resolved in the container.
+		if r.Debug != nil {
+			if arg == "--debug-server-path" && i+1 < len(args) {
+				i++
+				continue
+			}
+			if strings.HasPrefix(arg, "--debug-server-path=") {
+				continue
+			}
+			if strings.HasPrefix(arg, "--local=") {
+				if abs, err := filepath.Abs(strings.TrimPrefix(arg, "--local=")); err == nil {
+					processed = append(processed, "--local="+abs)
+					continue
+				}
+			}
+			if arg == "--local" && i+1 < len(args) {
+				if abs, err := filepath.Abs(args[i+1]); err == nil {
+					processed = append(processed, "--local", abs)
+					i++
+					continue
+				}
+			}
+		}
+
 		// Handle --local=value
 		if strings.HasPrefix(arg, "--local=") {
 			parts := strings.SplitN(arg, "=", 2)
@@ -569,6 +758,15 @@ func (r *RunnerDocker) processCommandArgs(args []string) []string {
 				i++ // skip next arg (the original value)
 				continue
 			}
+		}
+
+		// Rewrite the listener TLS files to the paths where they are mounted in the container.
+		if flag, val, ok := listenerTLSContainerArg(arg); ok {
+			processed = append(processed, flag+"="+val)
+			if !strings.Contains(arg, "=") {
+				i++ // skip next arg (the original value)
+			}
+			continue
 		}
 
 		processed = append(processed, arg)

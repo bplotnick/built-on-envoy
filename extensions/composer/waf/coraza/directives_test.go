@@ -7,9 +7,12 @@ package coraza
 
 import (
 	"io/fs"
+	"os"
+	"path/filepath"
 	"testing"
 
-	coreruleset "github.com/corazawaf/coraza-coreruleset/v4"
+	corazaconf "github.com/corazawaf/coraza-coreruleset/coraza/v3"
+	crs "github.com/corazawaf/coraza-coreruleset/crs/v4"
 	"github.com/corazawaf/coraza/v3"
 	"github.com/corazawaf/coraza/v3/experimental"
 	ctypes "github.com/corazawaf/coraza/v3/types"
@@ -34,9 +37,16 @@ func TestNormalizeDirectivePath(t *testing.T) {
 		// Prefix stripping: Coraza prepends the including file's directory
 		{input: "testdata/@coraza.conf", expected: "@coraza.conf"},
 		{input: "testdata/@recommended.conf", expected: "@coraza.conf"},
+		// Prefix stripping when the including file's directory contains an @
+		{input: "/etc/waf@prod/@coraza.conf", expected: "@coraza.conf"},
+		{input: "/etc/waf@prod/@recommended.conf", expected: "@coraza.conf"},
+		{input: "/go/pkg/mod/github.com/org/repo@v1.2.3/@ftw.conf", expected: "@ftw.conf"},
 		// No @ sign: pass-through unchanged
 		{input: "filename.conf", expected: "filename.conf"},
 		{input: "folder/filename.conf", expected: "folder/filename.conf"},
+		// @ sign not at the start of a path segment: pass-through unchanged
+		{input: "/etc/waf@prod/custom.conf", expected: "/etc/waf@prod/custom.conf"},
+		{input: "folder/foo@bar.conf", expected: "folder/foo@bar.conf"},
 	} {
 		t.Run(tc.input, func(t *testing.T) {
 			require.Equal(t, tc.expected, normalizeDirectivePath(tc.input))
@@ -79,7 +89,7 @@ func TestEmbeddedDirectives(t *testing.T) {
 	}
 }
 
-// combinedDirectivesFS order is embedded > coreruleset > local FS (OSFS)
+// combinedDirectivesFS order is embedded > coreruleset modules (crs, corazaconf) > local FS (OSFS)
 func TestCombinedDirectivesFS_ReadFile(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -93,10 +103,11 @@ func TestCombinedDirectivesFS_ReadFile(t *testing.T) {
 		{name: "@recommended.conf", source: embeddedConfigs},
 		{name: "@recommended-conf", source: embeddedConfigs},
 		{name: "@crs-setup-conf", source: embeddedConfigs},
-		// Coreruleset FS serves upstream directives
-		{name: "@coraza.conf-recommended", source: coreruleset.FS},
-		{name: "@crs-setup.conf.example", source: coreruleset.FS},
-		{name: "@owasp_crs/REQUEST-911-METHOD-ENFORCEMENT.conf", source: coreruleset.FS},
+		// Coreruleset modules serve upstream directives
+		{name: "@coraza.conf-recommended", source: corazaconf.FS},
+		{name: "@crs-setup.conf.example", source: crs.FS},
+		{name: "@crs-setup.conf.example-nodefaultact", source: crs.FS},
+		{name: "@owasp_crs/REQUEST-911-METHOD-ENFORCEMENT.conf", source: crs.FS},
 		// OSFS serves files from the local filesystem (testdata acts as a stand-in)
 		{name: "testdata/custom-rule.conf", source: io.OSFS},
 		{name: "testdata/custom-rule-2.conf", source: io.OSFS},
@@ -163,15 +174,38 @@ func TestCombinedDirectivesFS_Glob(t *testing.T) {
 // a special file name such as @coraza.conf (loaded from the embedded layer).
 func TestCombinedDirectivesFS_EmbeddedDirectivesInNestedInclude(t *testing.T) {
 	t.Run("baseline: ResponseBodyAccess is Off without @coraza.conf", func(t *testing.T) {
-		waf, err := NewWAFFromDirectives("SecRuleEngine On", zap.NewNop())
+		waf, err := newWAF("SecRuleEngine On", zap.NewNop(), combinedDirectivesFS)
 		require.NoError(t, err)
 		require.False(t, waf.NewTransaction().IsResponseBodyAccessible())
 	})
 	t.Run("embedded @coraza.conf resolves from within a local file include", func(t *testing.T) {
-		waf, err := NewWAFFromDirectives("Include testdata/include-coraza.conf", zap.NewNop())
+		waf, err := newWAF("Include testdata/include-coraza.conf", zap.NewNop(), combinedDirectivesFS)
 		require.NoError(t, err)
 		require.True(t, waf.NewTransaction().IsResponseBodyAccessible())
 	})
+	// The directory is generated at runtime to avoid committing an @ directory to testdata.
+	t.Run("embedded @coraza.conf resolves from within a local file in a directory containing @", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "waf@prod")
+		require.NoError(t, os.Mkdir(dir, 0o750))
+		conf := filepath.Join(dir, "my.conf")
+		require.NoError(t, os.WriteFile(conf, []byte("Include @coraza.conf\n"), 0o600))
+
+		waf, err := newWAF("Include "+conf, zap.NewNop(), combinedDirectivesFS)
+		require.NoError(t, err)
+		require.True(t, waf.NewTransaction().IsResponseBodyAccessible())
+	})
+	// Same as above for files served by the coraza-coreruleset modules.
+	for _, include := range []string{"@coraza.conf-recommended", "@owasp_crs/REQUEST-911-METHOD-ENFORCEMENT.conf"} {
+		t.Run("upstream "+include+" resolves from within a local file in a directory containing @", func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "waf@prod")
+			require.NoError(t, os.Mkdir(dir, 0o750))
+			conf := filepath.Join(dir, "my.conf")
+			require.NoError(t, os.WriteFile(conf, []byte("Include "+include+"\n"), 0o600))
+
+			_, err := newWAF("Include "+conf, zap.NewNop(), combinedDirectivesFS)
+			require.NoError(t, err)
+		})
+	}
 }
 
 // Verifies that via testdata/include-coraza.conf (loaded from OSFS) is possible to
